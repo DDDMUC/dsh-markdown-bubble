@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.1.0'
+    const PLUGIN_VERSION = '0.1.1'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
@@ -60,7 +60,23 @@ window.__ModuleLoader__.load({
     /** Chat-node seats this renderer replaces; the host serves both with one view. */
     const SEATS = ['user', 'steering']
 
-    /** The host registers the same keys at default priority 0; lowest renders, same priority would throw. */
+    // Seat priority: the host's default is 0, the plugin sits below it, and it
+    // must not merely be different — the same key at the same priority is not a
+    // shadow, it is an error.
+    //
+    // Evidence (verified against the installed host, DSH 0.2.0-rc.1):
+    // - the host registers these two keys with no priority field at all
+    //   (@deepseek-ai/dsh-client-ui-chat/lib/client.js:6830-6839), so its entry
+    //   carries the default;
+    // - @deepseek-ai/dsh-client-ui-slots/lib/index.js reads
+    //   options.priority ?? 0 (:167), keeps the ledger sorted by priority
+    //   ascending (:221) and answers a keyed cell with the FIRST live entry of
+    //   that key (:278-293) — the lowest priority renders;
+    // - the same key at the same priority throws instead of shadowing
+    //   (:177-178), so 0 would break the page, and a positive value would lose
+    //   the seat to the host.
+    // -1 is therefore the smallest step that shadows the host and stays clear
+    // of it.
     const SEAT_PRIORITY = -1
 
     const { createElement: h, Fragment } = react
@@ -224,6 +240,19 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * A whitespace-only plain run: the gap between two chips, or the leading /
+     * trailing padding the host's own pre-wrap bubble shows. It carries no
+     * markdown, so it is never a markdown block, but it is not nothing either —
+     * see the flush() comment in composeUserMarkdown.
+     * @param text - the run's whitespace.
+     * @param key - react key.
+     * @returns the gap span.
+     */
+    function gapSpan(text, key) {
+      return h('span', { className: 'dshmb-plain', 'data-dshmb-gap': '1', key }, text)
+    }
+
     /** One markdown block for one contiguous plain run. */
     function markdownBlock(source, labels, key) {
       return h(
@@ -235,8 +264,10 @@ window.__ModuleLoader__.load({
 
     /**
      * Compose the bubble body: reference chips stay chips, each contiguous
-     * plain run becomes a markdown block. A chip inside a running paragraph
-     * splits that paragraph around the chip; boundary chips read seamlessly.
+     * plain run becomes a markdown block — except a whitespace-only run, which
+     * stays a pre-wrap text node so two chips never glue together. A chip inside
+     * a running paragraph splits that paragraph around the chip; boundary chips
+     * read seamlessly.
      * @param text - the message text.
      * @param labels - markdown chrome labels.
      * @param referenceLabels - session recall labels the host associates with the message.
@@ -257,8 +288,22 @@ window.__ModuleLoader__.load({
       let run = []
       const flush = () => {
         if (run.length === 0) return
-        const source = toMarkdown(run.join(''))
-        if (source.trim() !== '') out.push(markdownBlock(source, labels, 'md' + out.length))
+        const raw = run.join('')
+        const source = toMarkdown(raw)
+        if (source.trim() === '') {
+          // Whitespace is not markdown, so it never becomes a block — but it is
+          // not nothing either. Between two chips it is the only thing keeping
+          // them apart: dropping it renders "@a@b" where the host shows
+          // "@a @b", and a newline between two chips (a real line break in the
+          // host's pre-wrap bubble) would collapse onto one line. The host
+          // projection keeps that run as a plain span with the same whitespace;
+          // this renderer keeps it as the pre-wrap stand-in instead of deleting
+          // it.
+          const gap = raw.replace(/\r\n?/gu, '\n')
+          if (gap !== '') out.push(gapSpan(gap, 'gap' + out.length))
+        } else {
+          out.push(markdownBlock(source, labels, 'md' + out.length))
+        }
         run = []
       }
       for (const piece of pieces) {
@@ -392,6 +437,16 @@ window.__ModuleLoader__.load({
      * @param props - message text, time, and the chat translator.
      * @returns the action strip.
      */
+    // Anchor fidelity, live-verified on the running instance: this strip is the
+    // row's first DOM child, its direct children are [clock span, copy button]
+    // exactly like the host's own MessageIconActions
+    // (@deepseek-ai/dsh-client-ui-chat/lib/client.js:1157-1172), the copy button
+    // keeps the _action suffix on a direct child (the host's Tooltip adds no
+    // wrapper box) and data-clock stays "start". dsh-edit-turn, dsh-delete-turn
+    // and dsh-rerun-turn therefore find the bar with
+    // row.querySelector('[class*="_actions"]') and their insertion point with
+    // bar.querySelectorAll('button') without knowing a single class hash of the
+    // host's.
     function MessageActions({ text, time, t }) {
       const day = useLocalDay()
       const [copied, setCopied] = react.useState(false)
@@ -426,14 +481,14 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'dshmb_actions', 'data-clock': 'start' },
+        { className: 'dshmb_actions', 'data-clock': 'start', 'data-dshmb-actions': '1' },
         clock,
         h(
           primitives.Tooltip,
           { label, side: 'bottom' },
           h(
             'button',
-            { type: 'button', className: 'dshmb_action', 'aria-label': label, onClick: onCopy },
+            { type: 'button', className: 'dshmb_action', 'aria-label': label, 'data-dshmb-action': '1', onClick: onCopy },
             copied ? h(primitives.IconCheckOutlineRegular, {}) : h(primitives.IconCopyOutlineRegular, {}),
           ),
         ),

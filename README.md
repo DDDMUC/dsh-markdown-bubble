@@ -93,6 +93,10 @@ const a = 1
 - 与 `dsh-edit-turn`、`dsh-delete-turn`、`dsh-rerun-turn` 协同：三者的按钮注入基于 `[class*="_actions"]` / `[class*="_action"]`，本插件保留该契约；被 dsh-edit-turn 改写（rollback）的消息显示其自己的改写气泡，与本插件无关。
 - 宿主半区为惰性入口（无运行时行为），全部逻辑在 `./client` 浏览器半区；不修改官方源码，不写私有事件类型。
 
+### 修复记录
+
+- **0.1.1** — 修复两个引用 chip 之间只有空白时该空白被当作空 Markdown 块丢弃的问题：相邻 chip 不再粘成 `@a@b`，chip 之间的换行也按宿主 `pre-wrap` 气泡的样子保留为换行（空白段渲染为 `data-dshmb-gap` 的预换行节点，仍不产生空 Markdown 块）；自建的操作条 / 复制按钮补上 `data-dshmb-actions` / `data-dshmb-action` 命名空间标记；座位优先级 `-1` 的宿主依据（宿主默认 0、最低者渲染、同优先级抛错）与三个兄弟插件依赖的锚点结构一并加进回归测试。
+
 ### License
 
 MIT
@@ -170,6 +174,10 @@ Queued-message previews, the composer itself and the goal panel stay plain text 
 - Verified against DSH `0.2.0-rc.1` (web profile, Chromium). Depends on the keyed `conversation.chat.node` slot, the `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo` row anchors, and the primitives exports `MarkdownText` / `projectUserText` / `writeClipboard`.
 - Works alongside `dsh-edit-turn`, `dsh-delete-turn` and `dsh-rerun-turn`: their injection relies on `[class*="_actions"]` / `[class*="_action"]`, which this plugin preserves. A message rewritten (rolled back) by dsh-edit-turn shows that plugin's own replacement bubble, which is out of scope here.
 - The host half is an inert entry (no runtime behavior); everything lives in the `./client` browser bundle. No official source is modified and no private event type is written.
+
+### Fixes
+
+- **0.1.1** — fixed whitespace-only plain runs between two reference chips being dropped as an empty Markdown block: adjacent chips no longer glue into `@a@b`, and a newline between two chips stays a line break the way the host's `pre-wrap` bubble shows it (the run renders as a `data-dshmb-gap` pre-wrap node, still never an empty Markdown block); the self-created action strip and copy button now carry the `data-dshmb-actions` / `data-dshmb-action` namespace markers; and the host evidence behind `priority: -1` (host default 0, lowest renders, same priority throws) plus the anchor structure the three sibling plugins rely on are covered by regression tests.
 
 ### License
 

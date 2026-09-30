@@ -1,6 +1,6 @@
 {
   "name": "dsh-markdown-bubble",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Markdown rendering for DeepSeek Harness sent user messages: every message bubble renders lists, code, tables, quotes and inline formatting through the host's own Markdown pipeline, while queues, previews and the composer keep their plain projection.",
   "type": "module",
   "main": "src/index.js",
