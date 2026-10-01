@@ -515,6 +515,47 @@ test('a chip-bearing message keeps the chip as a button between its markdown blo
   assert.ok(nodes.indexOf(chips[0]) < nodes.indexOf(blocks[1]))
 })
 
+test('a hostile host shape cannot retire the seat', () => {
+  // A throw while the seat itself renders is not caught by MarkdownBoundary (a
+  // boundary catches descendants, not the parent render that creates it). It
+  // escapes to the slot machinery, which retires the entry and hands the row
+  // back to the host's raw renderer — the exact symptom of "the plugin stopped
+  // rendering". The seat must therefore never throw, whatever the host shape.
+  const explodingProjection = (react) => () => {
+    throw new Error('projection exploded')
+  }
+  const explodingTranslate = () => {
+    throw new Error('locale exploded')
+  }
+
+  const cases = [
+    { label: 'a projection that throws', make: explodingProjection, overrides: {}, bubble: true },
+    { label: 'a translator that throws', make: undefined, overrides: { t: explodingTranslate }, bubble: true },
+    { label: 'no translator at all', make: undefined, overrides: { t: undefined }, bubble: true },
+    { label: 'content that is not an array', make: undefined, overrides: { node: { data: { content: undefined, time: 1 } } }, bubble: false },
+  ]
+
+  for (const testCase of cases) {
+    const { exports, react } = materialize(testCase.make, { codeCard: true })
+    let tree
+    assert.doesNotThrow(() => {
+      tree = renderTree(exports.MarkdownBubbleSeat(seatProps(testCase.overrides)), react)
+    }, testCase.label)
+    const row = querySelector(tree, (node) => node.className.includes('dshmb-row'))
+    assert.ok(row !== null, `${testCase.label}: the row still renders`)
+    assert.ok(
+      querySelector(row.kids, (node) => node.className.includes('_actions')) !== null,
+      `${testCase.label}: the action strip still renders`,
+    )
+    if (testCase.bubble) {
+      assert.ok(
+        querySelector(row.kids, (node) => node.className.includes('dshmb-bubble')) !== null,
+        `${testCase.label}: the bubble still renders`,
+      )
+    }
+  }
+})
+
 // --- I3 / I4: pure projection, no row hiding ---------------------------------
 
 test('the renderer is a pure projection: no inline styles and no hidden markers', () => {

@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.1.1'
+    const PLUGIN_VERSION = '0.1.2'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
@@ -230,6 +230,25 @@ window.__ModuleLoader__.load({
       return react.isValidElement(piece) && typeof piece.props.children === 'string' ? piece.props.children : ''
     }
 
+    /**
+     * A copy lookup that cannot take the seat down. The framework injects a
+     * `t` for the declared `chat` namespace, but a host-shape mismatch (a
+     * locale service that was never bound, a renamed key) must fall back to
+     * the key rather than throw during render.
+     * @param t - the injected chat translator, possibly not callable.
+     * @param key - the dictionary key.
+     * @param params - template parameters.
+     * @returns the translated string, or the key.
+     */
+    function safeTranslate(t, key, params) {
+      if (typeof t !== 'function') return key
+      try {
+        return t(key, params)
+      } catch {
+        return key
+      }
+    }
+
     /** The host projection, called in a guard: it is the fallback of last resort. */
     function plainProjection(text, referenceLabels, skillNames, references) {
       try {
@@ -237,6 +256,36 @@ window.__ModuleLoader__.load({
       } catch (error) {
         console.warn('[' + NS + '] the host user-text projection failed; showing raw text', error)
         return h('span', { className: 'dshmb-plain' }, text)
+      }
+    }
+
+    /**
+     * Compose the markdown body without ever throwing.
+     *
+     * `composeUserMarkdown` runs while the seat component renders, so a throw
+     * here does NOT reach {@link MarkdownBoundary} — a boundary catches its
+     * descendants, not the parent render that creates it. It would escape to
+     * the slot machinery, which answers by retiring the whole entry and handing
+     * the row back to the host's raw renderer; on screen that is
+     * indistinguishable from "the plugin stopped working". A host-shape
+     * mismatch (an unexpected node shape, an unrecognised projection result)
+     * therefore falls back to the plain projection right here, inside our own
+     * render, so the bubble keeps its shell, its actions and the sibling
+     * plugins' injection anchors.
+     * @param text - the message text.
+     * @param t - the injected chat translator.
+     * @param referenceLabels - session recall labels.
+     * @param skillNames - skill names.
+     * @param references - file/skill open callbacks.
+     * @returns the composed body, or null when markdown cannot be produced.
+     */
+    function safeMarkdownBody(text, t, referenceLabels, skillNames, references) {
+      try {
+        const labels = buildMarkdownLabels(t)
+        return composeUserMarkdown(text, labels, referenceLabels, skillNames, references)
+      } catch (error) {
+        console.warn('[' + NS + '] markdown composition failed; showing the plain projection', error)
+        return null
       }
     }
 
@@ -330,15 +379,15 @@ window.__ModuleLoader__.load({
     function buildMarkdownLabels(t) {
       return {
         code: {
-          copyLabel: t('copy'),
-          copiedLabel: t('copied'),
+          copyLabel: safeTranslate(t, 'copy'),
+          copiedLabel: safeTranslate(t, 'copied'),
           toolbarLabels: {
-            codeLabel: t('codeBlock.title'),
-            wrapLabel: t('codeBlock.wrap'),
-            unwrapLabel: t('codeBlock.unwrap'),
+            codeLabel: safeTranslate(t, 'codeBlock.title'),
+            wrapLabel: safeTranslate(t, 'codeBlock.wrap'),
+            unwrapLabel: safeTranslate(t, 'codeBlock.unwrap'),
           },
         },
-        footnotes: t('markdown.footnotes'),
+        footnotes: safeTranslate(t, 'markdown.footnotes'),
       }
     }
 
@@ -399,7 +448,7 @@ window.__ModuleLoader__.load({
       const clock = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
       if (date.getFullYear() === reference.getFullYear() && date.getMonth() === reference.getMonth() && date.getDate() === reference.getDate()) return clock
       const params = { y: date.getFullYear(), m: date.getMonth() + 1, d: date.getDate() }
-      return `${date.getFullYear() === reference.getFullYear() ? t('clock.md', params) : t('clock.ymd', params)} ${clock}`
+      return `${date.getFullYear() === reference.getFullYear() ? safeTranslate(t, 'clock.md', params) : safeTranslate(t, 'clock.ymd', params)} ${clock}`
     }
 
     // --- pieces -----------------------------------------------------------------
@@ -477,7 +526,7 @@ window.__ModuleLoader__.load({
 
       const clock =
         time === undefined ? null : h('span', { className: 'dshmb-timeStart' }, formatMessageClock(time, t, day))
-      const label = copied ? t('copied') : t('copy')
+      const label = copied ? safeTranslate(t, 'copied') : safeTranslate(t, 'copy')
 
       return h(
         'div',
@@ -506,17 +555,18 @@ window.__ModuleLoader__.load({
         return h(Fragment, null, renderMessageImages({ images: [attachment.image], align: 'end', compact: compactImages }))
       }
       const file = attachment.file ?? {}
-      const meta = [primitives.fileExtension(file.name).toUpperCase().slice(0, 8), primitives.fileSizeText(file.bytes)]
+      const name = typeof file.name === 'string' ? file.name : ''
+      const meta = [primitives.fileExtension(name).toUpperCase().slice(0, 8), primitives.fileSizeText(file.bytes)]
         .filter(Boolean)
         .join(' ')
       return h(
         'span',
-        { className: 'dshmb-fileCard', title: file.name },
-        h(primitives.FileTypeIcon, { path: file.name, className: 'dshmb-fileIcon' }),
+        { className: 'dshmb-fileCard', title: name },
+        h(primitives.FileTypeIcon, { path: name, className: 'dshmb-fileIcon' }),
         h(
           'span',
           { className: 'dshmb-fileContent' },
-          h('span', { className: 'dshmb-fileName' }, file.name),
+          h('span', { className: 'dshmb-fileName' }, name),
           h('span', { className: 'dshmb-fileMeta' }, meta),
         ),
       )
@@ -536,14 +586,17 @@ window.__ModuleLoader__.load({
       openSkill,
       t,
     }) {
-      const data = node.data
-      const { text, attachments, rest } = contentParts(data.content)
-      const referenceLabels = data.referenceLabels ?? []
-      const skillNames = data.skillNames ?? []
+      const data = node.data ?? {}
+      const { text, attachments, rest } = contentParts(Array.isArray(data.content) ? data.content : [])
+      const referenceLabels = Array.isArray(data.referenceLabels) ? data.referenceLabels : []
+      const skillNames = Array.isArray(data.skillNames) ? data.skillNames : []
       const references = react.useMemo(() => ({ openFile, openSkill }), [openFile, openSkill])
-      const labels = react.useMemo(() => buildMarkdownLabels(t), [t])
       const compactImages = attachments.length > 1
       const showBubble = text !== '' || rest.length > 0
+
+      // Never let composition throw out of this render — see safeMarkdownBody.
+      const body = safeMarkdownBody(text, t, referenceLabels, skillNames, references)
+      const fallback = plainProjection(text, referenceLabels, skillNames, references)
 
       // The action strip leads the row in DOM order and is pushed below the
       // bubble by flex `order`. Sibling plugins pick their bar with
@@ -576,17 +629,13 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dshmb-bubble' },
-              h(
-                MarkdownBoundary,
-                { key: text, fallback: plainProjection(text, referenceLabels, skillNames, references) },
-                composeUserMarkdown(text, labels, referenceLabels, skillNames, references),
-              ),
+              h(MarkdownBoundary, { key: text, fallback }, body === null ? fallback : body),
               rest.map((block, index) =>
                 h(primitives.JsonBlock, {
                   key: 'rest' + index,
-                  label: t('message.extraBlock'),
+                  label: safeTranslate(t, 'message.extraBlock'),
                   payload: block,
-                  truncatedLabel: (total) => t('json.truncated', { total }),
+                  truncatedLabel: (total) => safeTranslate(t, 'json.truncated', { total }),
                 }),
               ),
             ),
@@ -594,7 +643,9 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dshmb-referenceSummary' },
-              t('message.referenceSummary', { labels: referenceLabels.join(t('message.referenceSeparator')) }),
+              safeTranslate(t, 'message.referenceSummary', {
+                labels: referenceLabels.join(safeTranslate(t, 'message.referenceSeparator')),
+              }),
             ),
         ),
       )

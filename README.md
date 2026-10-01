@@ -95,6 +95,7 @@ const a = 1
 
 ### 修复记录
 
+- **0.1.2** — 座位组件不再可能因渲染期异常被槽位机制摘除：`composeUserMarkdown` / `buildMarkdownLabels` 在座位渲染过程中运行，抛错不会被错误边界接住（错误边界只能接住其后代，接不住创建它的那次渲染），会冒泡到槽位机制并把该条目整条退掉——屏幕上就是气泡交还给宿主、Markdown 变回源码。现在合成与所有文案查询都在座位内部兜底：任何宿主形状不符（节点结构异常、投影返回不可识别、locale 席位不可调用）都退回宿主原始投影，气泡外壳、操作条与兄弟插件锚点全部保留。`data.content` 非数组、`t` 不可调用等情形一并加进回归测试。
 - **0.1.1** — 修复两个引用 chip 之间只有空白时该空白被当作空 Markdown 块丢弃的问题：相邻 chip 不再粘成 `@a@b`，chip 之间的换行也按宿主 `pre-wrap` 气泡的样子保留为换行（空白段渲染为 `data-dshmb-gap` 的预换行节点，仍不产生空 Markdown 块）；自建的操作条 / 复制按钮补上 `data-dshmb-actions` / `data-dshmb-action` 命名空间标记；座位优先级 `-1` 的宿主依据（宿主默认 0、最低者渲染、同优先级抛错）与三个兄弟插件依赖的锚点结构一并加进回归测试。
 
 ### License
@@ -177,6 +178,7 @@ Queued-message previews, the composer itself and the goal panel stay plain text 
 
 ### Fixes
 
+- **0.1.2** — the seat component can no longer be retired by a render-time exception: `composeUserMarkdown` / `buildMarkdownLabels` run while the seat renders, and a throw there is not caught by the error boundary (a boundary catches its descendants, not the render that creates it) — it escapes to the slot machinery, which drops the whole entry and hands the row back to the host, so the bubble reverts to raw source on screen. Composition and every copy lookup now degrade inside the seat: any host-shape mismatch (an unexpected node, an unrecognised projection result, a locale seat that is not callable) falls back to the host's plain projection while the bubble shell, the action strip and the sibling-plugin anchors stay intact. `data.content` that is not an array and an uncallable `t` are covered by regression tests.
 - **0.1.1** — fixed whitespace-only plain runs between two reference chips being dropped as an empty Markdown block: adjacent chips no longer glue into `@a@b`, and a newline between two chips stays a line break the way the host's `pre-wrap` bubble shows it (the run renders as a `data-dshmb-gap` pre-wrap node, still never an empty Markdown block); the self-created action strip and copy button now carry the `data-dshmb-actions` / `data-dshmb-action` namespace markers; and the host evidence behind `priority: -1` (host default 0, lowest renders, same priority throws) plus the anchor structure the three sibling plugins rely on are covered by regression tests.
 
 ### License
