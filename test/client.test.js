@@ -638,3 +638,71 @@ test('package.json, the host half and the bundle agree on the version', () => {
   assert.equal(exports.PLUGIN_VERSION, PACKAGE.version)
   assert.equal(typeof PACKAGE.dsh.engines.dsh, 'string')
 })
+// --- the seat never throws, whatever the host hands it ------------------------
+
+test('no host shape can throw out of the seat render', () => {
+  // The invariant the plugin lives by: a throw inside the SEAT'S OWN render is
+  // not caught by MarkdownBoundary (a boundary catches its descendants, not the
+  // render that creates it). It escapes to the slot machinery, which retires the
+  // whole entry and hands the row back to the host's raw renderer — on screen,
+  // "the bubble went back to raw markdown", the exact report this round fixes.
+  //
+  // safeMarkdownBody guards composition and plainProjection guards the host
+  // projection; the shapes below are the ones that still threw when this test
+  // was written, each reproduced against the real bundle first:
+  //   - node absent          -> node.data
+  //   - props absent         -> the destructuring itself
+  //   - a time the Date constructor refuses (Symbol, BigInt, a valueOf that throws)
+  //   - a host image renderer that throws
+  const explodingProjection = (react) => () => {
+    throw new Error('projection exploded')
+  }
+  const throwingValue = { valueOf() { throw new Error('valueOf exploded') } }
+  const shapes = [
+    ['node undefined', { node: undefined }],
+    ['node null', { node: null }],
+    ['no props at all', undefined],
+    ['time is a Symbol', { node: { data: { content: [{ type: 'text', text: 'x' }], time: Symbol('t') } } }],
+    ['time is a BigInt', { node: { data: { content: [{ type: 'text', text: 'x' }], time: 10n } } }],
+    ['time is a throwing object', { node: { data: { content: [{ type: 'text', text: 'x' }], time: throwingValue } } }],
+    ['renderMessageImages throws', { node: { data: { content: [{ type: 'image', attachment: { id: 'a' } }] } }, renderMessageImages: () => { throw new Error('images exploded') } }],
+    ['a projection that throws', undefined, explodingProjection],
+  ]
+
+  for (const [label, overrides, makeProjection] of shapes) {
+    const { exports, react } = materialize(makeProjection)
+    let tree
+    assert.doesNotThrow(() => {
+      tree = renderTree(exports.MarkdownBubbleSeat(seatProps(overrides)), react)
+    }, label)
+
+    // The row survives AND keeps the anchors the three sibling plugins search
+    // for: without the strip on this row, edit / delete / rerun lose their
+    // insertion point and their own buttons vanish from a message that is still
+    // perfectly readable.
+    const row = querySelector(tree, (node) => node.className.includes('dshmb-row'))
+    assert.ok(row !== null, label + ': the row still renders')
+    const strip = querySelector(row.kids, (node) => node.className.includes('_actions'))
+    assert.ok(strip !== null, label + ': the action strip still renders')
+    assert.equal(strip.props['data-dshmb-actions'], '1', label + ': the strip keeps its namespace')
+    assert.equal(row.kids[0], strip, label + ': the strip still leads the row in DOM order')
+  }
+})
+
+test('a degraded row shows the raw text instead of nothing', () => {
+  // The last-resort net returns plain text rather than an empty row: losing the
+  // markdown is survivable, losing the message is not.
+  const { exports, react } = materialize()
+  const props = seatProps()
+  // Force the seat body to throw after the text is already known: a throwing
+  // translator is the cheapest way in (the strip and the reference summary both
+  // call it).
+  props.t = () => {
+    throw new Error('locale exploded')
+  }
+  const tree = renderTree(exports.MarkdownBubbleSeat(props), react)
+  const row = querySelector(tree, (node) => node.className.includes('dshmb-row'))
+  assert.ok(row !== null, 'the row renders')
+  assert.ok(querySelector(row.kids, (node) => node.className.includes('_actions')) !== null, 'the strip renders')
+  assert.ok(querySelector(row.kids, (node) => node.className.includes('dshmb-bubble')) !== null, 'the text still shows')
+})

@@ -15,7 +15,7 @@
 export const PLUGIN_ID = 'dsh-markdown-bubble'
 
 /** Keep in sync with package.json and src/client.js. */
-export const PLUGIN_VERSION = '0.1.2'
+export const PLUGIN_VERSION = '0.1.3'
 
 /** Cordis plugin name; the bundle patch resolves the package by this row. */
 export const name = PLUGIN_ID

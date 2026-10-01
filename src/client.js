@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.1.2'
+    const PLUGIN_VERSION = '0.1.3'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
@@ -435,6 +435,23 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Log one degradation per distinct reason.
+     *
+     * The seat renders on every transcript update, so a hostile host shape would
+     * otherwise print the same warning on every pass and bury the one line that
+     * matters. Keyed by the reason rather than by the row: what a reader needs to
+     * know is which guard fired, once.
+     * @param reason - one line naming what degraded.
+     * @param error - the caught value.
+     */
+    const warnedReasons = new Set()
+    function warnOnce(reason, error) {
+      if (warnedReasons.has(reason)) return
+      warnedReasons.add(reason)
+      console.warn('[' + NS + '] ' + reason, error)
+    }
+
+    /**
      * The host's message clock: `HH:mm` for today, the `clock.md` date plus
      * the clock earlier this year, the `clock.ymd` form for other years.
      * @param time - message time in epoch milliseconds.
@@ -443,8 +460,21 @@ window.__ModuleLoader__.load({
      * @returns the display string.
      */
     function formatMessageClock(time, t, now) {
-      const date = new Date(time)
-      const reference = new Date(now)
+      // `new Date(x)` throws on a Symbol, a BigInt, or an object whose `valueOf`
+      // throws — and the host hands `data.time` through unchanged. A throw here
+      // happens INSIDE the seat's subtree, outside MarkdownBoundary (the strip is
+      // not the markdown body), so it would escape to the slot machinery and
+      // retire the whole entry. A missing clock is a cosmetic loss; a retired
+      // renderer is "the plugin stopped working".
+      let date
+      let reference
+      try {
+        date = new Date(time)
+        reference = new Date(now)
+      } catch (error) {
+        warnOnce('the message time cannot be read; the clock is hidden', error)
+        return ''
+      }
       const clock = `${pad2(date.getHours())}:${pad2(date.getMinutes())}`
       if (date.getFullYear() === reference.getFullYear() && date.getMonth() === reference.getMonth() && date.getDate() === reference.getDate()) return clock
       const params = { y: date.getFullYear(), m: date.getMonth() + 1, d: date.getDate() }
@@ -550,7 +580,20 @@ window.__ModuleLoader__.load({
      * @param props - the attachment entry and the owner's image renderer.
      * @returns the row entry.
      */
-    function AttachmentEntry({ attachment, renderMessageImages, compactImages }) {
+    function AttachmentEntry(props) {
+      // The image branch calls the HOST's renderer during our render, and the
+      // file branch calls host primitives (`fileExtension`, `fileSizeText`). Both
+      // sit outside MarkdownBoundary, so either can retire the entry. One
+      // attachment is worth losing; the row is not.
+      try {
+        return renderAttachmentEntry(props)
+      } catch (error) {
+        warnOnce('an attachment could not be rendered; it is skipped', error)
+        return null
+      }
+    }
+
+    function renderAttachmentEntry({ attachment, renderMessageImages, compactImages }) {
       if (attachment.type === 'image') {
         return h(Fragment, null, renderMessageImages({ images: [attachment.image], align: 'end', compact: compactImages }))
       }
@@ -579,14 +622,35 @@ window.__ModuleLoader__.load({
      * @param props - keyed chat renderer seat for the `user`/`steering` kinds.
      * @returns the right-aligned bubble with attachments, markdown, chips and actions.
      */
-    const MarkdownBubbleSeat = react.memo(function MarkdownBubbleSeat({
-      node,
-      renderMessageImages,
-      openFile,
-      openSkill,
-      t,
-    }) {
-      const data = node.data ?? {}
+    const MarkdownBubbleSeat = react.memo(function MarkdownBubbleSeat(props) {
+      try {
+        return renderMarkdownBubble(props)
+      } catch (error) {
+        // Last-resort net. Everything that can throw is guarded where it is
+        // called (see safeMarkdownBody, plainProjection, formatMessageClock,
+        // AttachmentEntry); this exists so an UNKNOWN host shape degrades one
+        // row to plain text instead of retiring the renderer. The fallback still
+        // renders the action strip, because the three sibling plugins anchor
+        // their own buttons on `row.querySelector('[class*="_actions"]')`.
+        warnOnce('the markdown seat failed to render; showing the plain text', error)
+        return renderPlainRow(props)
+      }
+    })
+
+    /**
+     * The real seat body. Separated from the memo wrapper so the wrapper can hold
+     * one try/catch for the whole synchronous render.
+     * @param props - keyed chat renderer seat for the `user`/`steering` kinds.
+     * @returns the right-aligned bubble with attachments, markdown, chips and actions.
+     */
+    function renderMarkdownBubble(props) {
+      const safeProps = props !== null && typeof props === 'object' ? props : {}
+      const node = safeProps.node !== null && typeof safeProps.node === 'object' ? safeProps.node : {}
+      const renderMessageImages = safeProps.renderMessageImages
+      const openFile = safeProps.openFile
+      const openSkill = safeProps.openSkill
+      const t = safeProps.t
+      const data = node.data !== null && typeof node.data === 'object' ? node.data : {}
       const { text, attachments, rest } = contentParts(Array.isArray(data.content) ? data.content : [])
       const referenceLabels = Array.isArray(data.referenceLabels) ? data.referenceLabels : []
       const skillNames = Array.isArray(data.skillNames) ? data.skillNames : []
@@ -649,7 +713,33 @@ window.__ModuleLoader__.load({
             ),
         ),
       )
-    })
+    }
+
+    /**
+     * The degraded row: the action strip plus the raw text, built so that nothing
+     * in it can throw.
+     * @param props - whatever the seat was handed.
+     * @returns the row with its sibling anchors intact.
+     */
+    function renderPlainRow(props) {
+      const safeProps = props !== null && typeof props === 'object' ? props : {}
+      const node = safeProps.node !== null && typeof safeProps.node === 'object' ? safeProps.node : {}
+      const data = node.data !== null && typeof node.data === 'object' ? node.data : {}
+      let text = ''
+      try {
+        text = contentParts(Array.isArray(data.content) ? data.content : []).text
+      } catch {
+        text = ''
+      }
+      return h(
+        'div',
+        { className: 'dshmb-row', 'data-dshmb-row': '1', 'data-dshmb-degraded': '1' },
+        h(MessageActions, { text, time: data.time, t: safeProps.t }),
+        text === ''
+          ? null
+          : h('div', { className: 'dshmb-stack' }, h('div', { className: 'dshmb-bubble' }, h('span', { className: 'dshmb-plain' }, text))),
+      )
+    }
 
     // --- style ------------------------------------------------------------------
 
