@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.1.3'
+    const PLUGIN_VERSION = '0.1.4'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
@@ -249,12 +249,32 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** The host projection, called in a guard: it is the fallback of last resort. */
-    function plainProjection(text, referenceLabels, skillNames, references) {
+    /**
+     * The ONE degraded projection: what this plugin shows whenever the markdown
+     * pipeline cannot be used.
+     *
+     * The host's own projection is tried first — it is the rendering the host
+     * would have used, so reference chips and inline pieces survive it — and a
+     * projection that throws degrades once more, to the raw text. Composition
+     * failure (see {@link safeMarkdownBody}), a boundary catch and the
+     * last-resort net (see {@link renderPlainRow}) ALL answer here, so the ways
+     * this plugin degrades cannot drift apart: there is no second copy of the
+     * fallback for someone to keep in step.
+     *
+     * Content comes first: the raw-text step is the last step, reached only when
+     * the host itself refuses to project.
+     *
+     * @param text - the message text.
+     * @param referenceLabels - session recall labels.
+     * @param skillNames - skill names.
+     * @param references - file/skill open callbacks.
+     * @returns the degraded body, never null and never a throw.
+     */
+    function degradedBody(text, referenceLabels, skillNames, references) {
       try {
         return primitives.projectUserText(text, referenceLabels, skillNames, 'skill', references)
       } catch (error) {
-        console.warn('[' + NS + '] the host user-text projection failed; showing raw text', error)
+        warnOnce('the host user-text projection failed; showing raw text', error)
         return h('span', { className: 'dshmb-plain' }, text)
       }
     }
@@ -269,7 +289,7 @@ window.__ModuleLoader__.load({
      * the row back to the host's raw renderer; on screen that is
      * indistinguishable from "the plugin stopped working". A host-shape
      * mismatch (an unexpected node shape, an unrecognised projection result)
-     * therefore falls back to the plain projection right here, inside our own
+     * therefore falls back to {@link degradedBody} right here, inside our own
      * render, so the bubble keeps its shell, its actions and the sibling
      * plugins' injection anchors.
      * @param text - the message text.
@@ -284,7 +304,7 @@ window.__ModuleLoader__.load({
         const labels = buildMarkdownLabels(t)
         return composeUserMarkdown(text, labels, referenceLabels, skillNames, references)
       } catch (error) {
-        console.warn('[' + NS + '] markdown composition failed; showing the plain projection', error)
+        warnOnce('markdown composition failed; showing the degraded projection', error)
         return null
       }
     }
@@ -326,7 +346,9 @@ window.__ModuleLoader__.load({
      */
     function composeUserMarkdown(text, labels, referenceLabels, skillNames, references) {
       if (typeof text !== 'string' || text === '') return null
-      const projected = plainProjection(text, referenceLabels, skillNames, references)
+      // The same single degraded projection, so a projection that throws inside
+      // composition degrades exactly as one that throws on the healthy path.
+      const projected = degradedBody(text, referenceLabels, skillNames, references)
       const pieces =
         react.isValidElement(projected) && projected.type === Fragment && Array.isArray(projected.props.children)
           ? projected.props.children
@@ -627,7 +649,7 @@ window.__ModuleLoader__.load({
         return renderMarkdownBubble(props)
       } catch (error) {
         // Last-resort net. Everything that can throw is guarded where it is
-        // called (see safeMarkdownBody, plainProjection, formatMessageClock,
+        // called (see safeMarkdownBody, degradedBody, formatMessageClock,
         // AttachmentEntry); this exists so an UNKNOWN host shape degrades one
         // row to plain text instead of retiring the renderer. The fallback still
         // renders the action strip, because the three sibling plugins anchor
@@ -659,8 +681,10 @@ window.__ModuleLoader__.load({
       const showBubble = text !== '' || rest.length > 0
 
       // Never let composition throw out of this render — see safeMarkdownBody.
+      // One degraded body per render, shared by the composition guard and the
+      // boundary's own fallback; the last-resort net calls it too.
       const body = safeMarkdownBody(text, t, referenceLabels, skillNames, references)
-      const fallback = plainProjection(text, referenceLabels, skillNames, references)
+      const degraded = degradedBody(text, referenceLabels, skillNames, references)
 
       // The action strip leads the row in DOM order and is pushed below the
       // bubble by flex `order`. Sibling plugins pick their bar with
@@ -693,7 +717,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dshmb-bubble' },
-              h(MarkdownBoundary, { key: text, fallback }, body === null ? fallback : body),
+              h(MarkdownBoundary, { key: text, fallback: degraded }, body === null ? degraded : body),
               rest.map((block, index) =>
                 h(primitives.JsonBlock, {
                   key: 'rest' + index,
@@ -725,19 +749,28 @@ window.__ModuleLoader__.load({
       const safeProps = props !== null && typeof props === 'object' ? props : {}
       const node = safeProps.node !== null && typeof safeProps.node === 'object' ? safeProps.node : {}
       const data = node.data !== null && typeof node.data === 'object' ? node.data : {}
-      let text = ''
+      let parts
       try {
-        text = contentParts(Array.isArray(data.content) ? data.content : []).text
+        parts = contentParts(Array.isArray(data.content) ? data.content : [])
       } catch {
-        text = ''
+        parts = { text: '', attachments: [], rest: [] }
       }
+      const text = parts.text
+      // The same degraded projection the healthy path uses, so a row that
+      // degraded in one place looks exactly like a row that degraded in another.
+      const degraded = degradedBody(
+        text,
+        Array.isArray(data.referenceLabels) ? data.referenceLabels : [],
+        Array.isArray(data.skillNames) ? data.skillNames : [],
+        { openFile: safeProps.openFile, openSkill: safeProps.openSkill },
+      )
       return h(
         'div',
         { className: 'dshmb-row', 'data-dshmb-row': '1', 'data-dshmb-degraded': '1' },
         h(MessageActions, { text, time: data.time, t: safeProps.t }),
         text === ''
           ? null
-          : h('div', { className: 'dshmb-stack' }, h('div', { className: 'dshmb-bubble' }, h('span', { className: 'dshmb-plain' }, text))),
+          : h('div', { className: 'dshmb-stack' }, h('div', { className: 'dshmb-bubble' }, degraded)),
       )
     }
 

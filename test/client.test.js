@@ -706,3 +706,26 @@ test('a degraded row shows the raw text instead of nothing', () => {
   assert.ok(querySelector(row.kids, (node) => node.className.includes('_actions')) !== null, 'the strip renders')
   assert.ok(querySelector(row.kids, (node) => node.className.includes('dshmb-bubble')) !== null, 'the text still shows')
 })
+
+// --- one degradation function, by construction ---------------------------------
+
+test('there is exactly one place that projects, and one that builds the raw text', () => {
+  // The reviewer's rule: the ways this plugin degrades must answer ONE function,
+  // so they cannot drift apart. Composition failure, a boundary catch and the
+  // last-resort net all show the same thing; a second copy of the fallback is
+  // how they stop doing so.
+  const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
+  const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
+
+  const projections = [...code.matchAll(/primitives\.projectUserText\(/g)]
+  assert.equal(projections.length, 1, 'the host projection is called in exactly one place (degradedBody)')
+
+  // The raw-text span is constructed once too. gapSpan (the whitespace between
+  // two chips) is a *composition* piece, not a degradation, so it is allowed.
+  const rawText = [...code.matchAll(/h\('span', \{ className: 'dshmb-plain' \}, text\)/g)]
+  assert.equal(rawText.length, 1, 'the degraded raw-text span is built in exactly one place')
+
+  // And every degradation caller goes through it.
+  const calls = [...code.matchAll(/degradedBody\(/g)]
+  assert.ok(calls.length >= 4, 'degradation (composition, boundary fallback, last resort) shares one function')
+})
