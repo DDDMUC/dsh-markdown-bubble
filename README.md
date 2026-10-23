@@ -33,9 +33,9 @@ DSH 的用户消息气泡按原样显示你输入的文字（`white-space: pre-w
 
 - **官方座位替换** —— 经 `ctx.slots` 在 `conversation.chat.node` 的 `user` / `steering` 两个 keyed 座位上以 `priority: -1` 遮蔽宿主渲染器；停用/卸载即恢复宿主自己的气泡，不改源码、不动日志
 - **宿主同款渲染** —— 不自己造 Markdown 管线，直接调用 `@deepseek-ai/dsh-client-ui-primitives` 的 `MarkdownText`：与助手回复同一套解析、高亮、表格、公式与代码卡
-- **引用 chip 保留** —— 宿主投影函数 `projectUserText` 照常调用，返回的片段按 chip / 纯文本拆分：chip 仍是可点击的文件 / 技能 chip，纯文本段逐个进 Markdown
+- **引用 chip 保留** —— 调用宿主自己的文本工厂槽 `conversation.user.text`（0.2.1 起投影就住在那里），返回的片段按 chip / 纯文本拆分：chip 仍是可点击的文件 / 技能 chip，纯文本段逐个进 Markdown
 - **操作条与三方插件兼容** —— 时间 + 复制按钮用官方 primitives 重建，操作条保留 `_actions` / `_action` 类名后缀与 `data-clock` 锚点；dsh-edit-turn、dsh-delete-turn、dsh-rerun-turn 的按钮注入照常工作
-- **附件与补充块** —— 图片走官方 `conversation.message.images` 座位（`renderMessageImages`），文件卡、引用摘要、`JsonBlock` 补充块与宿主同款
+- **附件与补充块** —— 图片走官方的图片画廊工厂槽 `conversation.images.content`，文件卡、引用摘要、`JsonBlock` 补充块与宿主同款
 - **软换行保留** —— 仅对围栏代码之外的续行补 GFM 两空格硬换行；代码块一个字节不动，缩进代码与表格行不误伤
 - **出错兜底** —— 单条消息的渲染错误被错误边界接住，回退为宿主的原始投影，不会连累整条座位被槽位机制摘除
 - **中英双语** 随系统语言切换（代码卡文案复用宿主 `chat` 字典）
@@ -89,12 +89,30 @@ const a = 1
 
 ### 兼容性
 
-- 实测 DSH `0.2.0-rc.1`（web profile，Chromium）。依赖：keyed 槽位 `conversation.chat.node`、行锚点 `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo`、primitives 导出的 `MarkdownText` / `projectUserText` / `writeClipboard`。
+- 实测 DSH `0.2.1-rc.2`（web profile，Chromium）。依赖：keyed 槽位 `conversation.chat.node`（`user` / `steering`）、座位上的 `renderFactorySlot` 绑定、行锚点 `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo`、primitives 导出的 `MarkdownText` / `writeClipboard`。
+- **0.2.1 把扩展点往里挪了**，本插件 0.1.5 已按新契约移植（旧契约的三样东西都不在了）：`primitives.projectUserText` 被删除 → 改调文本工厂槽 `conversation.user.text`；座位 props 从 `{ node, renderMessageImages, openFile, openSkill, t }` 变成 `{ node, renderFactorySlot, loadImage, t }` → 图片改调图片画廊工厂槽 `conversation.images.content`。
+- **为什么不能去换内容工厂槽**：`conversation.chat.user.content` 由宿主注册，插件再注册同名工厂会让**宿主自己的聊天插件启动失败**（实测 `web boot: 1 entry did not activate @deepseek-ai/dsh-client-ui-chat: failed`），所以「只换气泡内部」这条路走不通；同理，`conversation.chat.user.images` 这个子槽也不能由插件声明（实测 `slot "conversation.chat.user.images" is already declared (by factory "conversation.chat.user.content")`）。座位替换 + 两个工厂槽调用是当前版本唯一可行且不伤宿主的组合。
 - 与 `dsh-edit-turn`、`dsh-delete-turn`、`dsh-rerun-turn` 协同：三者的按钮注入基于 `[class*="_actions"]` / `[class*="_action"]`，本插件保留该契约；被 dsh-edit-turn 改写（rollback）的消息显示其自己的改写气泡，与本插件无关。
 - 宿主半区为惰性入口（无运行时行为），全部逻辑在 `./client` 浏览器半区；不修改官方源码，不写私有事件类型。
 
+### 为什么现在不能换成「替换内容工厂」（B 方案）
+
+理想做法是替换宿主的内容工厂槽 `conversation.chat.user.content`：气泡内部（附件 + 气泡 + 引用摘要）全部交回宿主，本插件只换掉正文那一段。这样能删掉自建的行外壳、时间/复制操作条与相关样式约 200 行，也不再依赖座位 props 的形状。**现在做不了，卡在下面三条**（都在 DSH `0.2.1-rc.2` 上实测过；等哪天宿主放开了任意一条，就可以改成 B）：
+
+| 缺什么 | 实测结果 | 放开之后 |
+|---|---|---|
+| 工厂槽能被插件**遮蔽/替换** | 注册同名工厂不是遮蔽而是硬错误，且会让**宿主自己的聊天插件启动失败**：`web boot: 1 entry did not activate @deepseek-ai/dsh-client-ui-chat: failed` | 直接换成注册 `conversation.chat.user.content`，删掉自建行外壳与操作条 |
+| 子槽能由**多个**声明方共享 | 想让座位条目自己声明 `conversation.chat.user.images` 以拿到 `renderSlot`，被拒：`slot "conversation.chat.user.images" is already declared (by factory "conversation.chat.user.content")`，且整条注册一起失败 | 图片可以用官方的座位/子槽渲染，不必绕工厂槽 |
+| 有一个**公开的**「渲染一条用户消息」入口 | 0.2.1 删掉了 `primitives.projectUserText`，投影只存在于工厂槽内部（现在只能调 `conversation.user.text` / `conversation.images.content` 这两个工厂槽） | 插件插入的气泡（例如 dsh-edit-turn 改写后的提示词）也能走同一条管线，见 [deepseek-harness#10704](https://github.com/deepseek-ai/deepseek-harness/discussions/10704) |
+
+也就是说：**座位替换（A）+ 调两个工厂槽**是当前版本唯一不伤宿主的组合；上面三条任意一条放开，都可以迁到 B。
+
 ### 修复记录
 
+- **0.1.5** —— 按 DSH `0.2.1-rc.2` 的新契约移植，并把 `engines.dsh` 从开口的 `>=0.2.0-rc.1` 收成 `>=0.2.1-rc.2`（旧区间会让它在 0.2.1 上照样安装、只静默降级）。
+  - **引用 chip 回来了**：`primitives.projectUserText` 在 0.2.1 被删除（真机报 `TypeError: primitives.projectUserText is not a function`），投影改成调用宿主的文本工厂槽 `conversation.user.text`（`facts.sessionLabels` / `facts.skillNames` + `interactive`），chip 拆分逻辑不变。真机复验：控制台里那条降级告警不再出现（0 条），25/25 条用户气泡仍由本插件渲染。
+  - **图片附件回来了**：座位 props 里的 `renderMessageImages` 已不存在，改调图片画廊工厂槽 `conversation.images.content`（附件插件自己注册的那个；它的 `MessageImages` 也只是这一步调用）。三条看起来更顺的路都被堵着，README 的「兼容性」一节记了实测报错原文。
+  - **性能**：降级投影从「每帧算两次」改成只算一次（`MarkdownBoundary` 的 fallback 改成惰性 thunk，只有真失败时才构造）；`toMarkdown()` 加 64 条 LRU 缓存（流式期间同一条消息会被反复重排，而准备源码是 split/join + 逐行正则）；传给 `MarkdownText` 的 labels 对象按 `t` 记忆化（宿主自己的 `ReasoningContent` 正是这么做的，每次新建对象会让下游 memo 失效）。
 - **0.1.4** —— 按评审意见把降级路径**合成一个函数**：此前「合成失败」「宿主投影抛错」「最后兜底」各自写了一份降级逻辑（一份调宿主投影、一份内联拼裸文本），三处要人工保持同步。现在只有 `degradedBody()` 一处：先试宿主自己的投影（保住引用 chip 等宿主渲染），投影也抛才退到裸文本；三条降级路径全部走它。内容优先这一点写进函数契约：裸文本是最后一步，只有宿主自己拒绝投影时才到。新增回归：断言 `projectUserText` 全仓只有一次调用、裸文本 span 只有一处构造、降级调用方都走同一函数（再造一份降级该测试转红）。
 - **0.1.3** —— 把「座位 render 绝不抛」这条不变式补完：0.1.2 守住了合成与文案查询，但仍有形状会在**座位自己的渲染里**抛错（`node` 缺失 → `node.data`、`props` 缺失 → 解构本身、`new Date(time)` 遇到 Symbol / BigInt / 抛错的 valueOf、宿主图片渲染器抛错）。这些同样冒泡到槽位机制、退掉整条条目，症状与 0.1.2 修的完全一样。现在三层兜底：座位本体一层 try 并把 `node` / `data` 的取用改成防御式；时钟与附件卡在各自调用点兜底；最后一层 `renderPlainRow` 保证最坏情况只是这一行退回纯文本，而操作条与兄弟插件锚点仍在。新增回归：21 种恶意宿主形状逐一断言不抛、且行与操作条都在。
 - **0.1.2** — 座位组件不再可能因渲染期异常被槽位机制摘除：`composeUserMarkdown` / `buildMarkdownLabels` 在座位渲染过程中运行，抛错不会被错误边界接住（错误边界只能接住其后代，接不住创建它的那次渲染），会冒泡到槽位机制并把该条目整条退掉——屏幕上就是气泡交还给宿主、Markdown 变回源码。现在合成与所有文案查询都在座位内部兜底：任何宿主形状不符（节点结构异常、投影返回不可识别、locale 席位不可调用）都退回宿主原始投影，气泡外壳、操作条与兄弟插件锚点全部保留。`data.content` 非数组、`t` 不可调用等情形一并加进回归测试。

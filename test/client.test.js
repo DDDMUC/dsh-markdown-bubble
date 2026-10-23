@@ -80,7 +80,9 @@ function primitivesStub(projectUserText, options, react) {
       : []),
   ]
   return {
-    projectUserText,
+    // The removed primitive is deliberately absent: the plugin must reach the
+    // projection through the seat's Factory binding, which is the only path the
+    // current host offers.
     MarkdownText: (props) => react.createElement('div', { className: 'markdown' }, markdownBody(props)),
     JsonBlock: function JsonBlock() {},
     Tooltip: (props) => props.children,
@@ -108,6 +110,7 @@ function materialize(makeProjection, options) {
     makeProjection === undefined
       ? (text) => react.createElement('span', { className: 'plainRun' }, text)
       : makeProjection(react)
+  activeProjection = projectUserText
   const primitives = primitivesStub(projectUserText, options, react)
   const require = (spec) => {
     if (spec === 'react') return react
@@ -187,6 +190,24 @@ function querySelector(nodes, predicate) {
   return flatten(nodes).find(predicate) ?? null
 }
 
+/**
+ * The projection the current seat stub answers with.
+ *
+ * On the host this is the `conversation.user.text` Factory; in a test it is the
+ * function {@link materialize} built. Kept module-level because the seat stub is
+ * called with props alone.
+ */
+let activeProjection = (text) => text
+
+/** The `renderFactorySlot` binding the seat (and a direct compose call) gets. */
+const factorySlotStub = (name, props) => projectionFor(name, props)
+
+/** The `renderFactorySlot` stub the seat receives. */
+function projectionFor(name, props) {
+  if (name !== 'conversation.user.text') return null
+  return activeProjection(props && typeof props.text === 'string' ? props.text : '')
+}
+
 /** The props a keyed conversation.chat.node seat receives for a user row. */
 function seatProps(overrides) {
   return {
@@ -198,9 +219,11 @@ function seatProps(overrides) {
         skillNames: [],
       },
     },
-    renderMessageImages: () => null,
-    openFile: () => {},
-    openSkill: () => {},
+    // 0.2.1-rc.2 seat props: the text Factory (chips + plain runs), the declared
+    // image child slot, and the image loader. The old `renderMessageImages` /
+    // `openFile` / `openSkill` triple no longer exists on the host.
+    renderFactorySlot: (name, props) => projectionFor(name, props),
+    loadImage: () => null,
     t: (key) => key,
     ...overrides,
   }
@@ -344,14 +367,14 @@ test('a block without an attachment falls through to rest', () => {
 
 test('a message without chips becomes one markdown block', () => {
   const { exports } = materialize()
-  const body = exports.composeUserMarkdown('line one\nline two', {}, [], [], undefined)
+  const body = exports.composeUserMarkdown('line one\nline two', {}, [], [], factorySlotStub)
   assert.equal(body.props['data-dshmb-md'], '1')
   assert.equal(body.props.children.props.text, 'line one  \nline two')
 })
 
 test('chips stay chips and plain runs become markdown blocks around them', () => {
   const { exports } = materialize(chipProjection(2, { 'data-ref-chip': 'file' }, 'file.ts'))
-  const body = exports.composeUserMarkdown('abFILEcd', {}, [], [], undefined)
+  const body = exports.composeUserMarkdown('abFILEcd', {}, [], [], factorySlotStub)
   const children = body.props.children
   assert.equal(children.length, 3)
   assert.equal(children[0].props['data-dshmb-md'], '1')
@@ -361,7 +384,7 @@ test('chips stay chips and plain runs become markdown blocks around them', () =>
 
 test('a whitespace-only run keeps its gap instead of becoming an empty block', () => {
   const { exports } = materialize(chipProjection(3, { 'data-ref-chip': 'skill' }, 'skill'))
-  const body = exports.composeUserMarkdown('   x', {}, [], [], undefined)
+  const body = exports.composeUserMarkdown('   x', {}, [], [], factorySlotStub)
   // Composition is [gap, chip, md]: the blank run is the host's own pre-wrap
   // plain run, never an emptied-out markdown block.
   const children = body.props.children
@@ -375,7 +398,7 @@ test('a whitespace-only run keeps its gap instead of becoming an empty block', (
 
 test('the whitespace between two chips survives: chips are not glued together', () => {
   const { exports } = materialize(chipPairProjection(' '))
-  const body = exports.composeUserMarkdown('@a @b', {}, [], [], undefined)
+  const body = exports.composeUserMarkdown('@a @b', {}, [], [], factorySlotStub)
   const children = body.props.children
   assert.equal(children.length, 3)
   // Each chip is wrapped in a keyed fragment; the gap is this plugin's own node.
@@ -387,7 +410,7 @@ test('the whitespace between two chips survives: chips are not glued together', 
 
 test('a newline between two chips stays a line break, as the host pre-wrap bubble shows it', () => {
   const { exports } = materialize(chipPairProjection('\n'))
-  const body = exports.composeUserMarkdown('@a\n@b', {}, [], [], undefined)
+  const body = exports.composeUserMarkdown('@a\n@b', {}, [], [], factorySlotStub)
   const gap = body.props.children[1]
   assert.equal(gap.props['data-dshmb-gap'], '1')
   assert.equal(gap.props.className, 'dshmb-plain')
@@ -396,7 +419,7 @@ test('a newline between two chips stays a line break, as the host pre-wrap bubbl
 
 test('empty text composes to nothing', () => {
   const { exports } = materialize()
-  assert.equal(exports.composeUserMarkdown('', {}, [], [], undefined), null)
+  assert.equal(exports.composeUserMarkdown('', {}, [], [], factorySlotStub), null)
 })
 
 // --- registration ------------------------------------------------------------
@@ -717,8 +740,13 @@ test('there is exactly one place that projects, and one that builds the raw text
   const source = readFileSync(new URL('../src/client.js', import.meta.url), 'utf8')
   const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
 
-  const projections = [...code.matchAll(/primitives\.projectUserText\(/g)]
+  const projections = [...code.matchAll(/renderFactorySlot\('conversation\.user\.text'/g)]
   assert.equal(projections.length, 1, 'the host projection is called in exactly one place (degradedBody)')
+  assert.equal(
+    /primitives\.projectUserText/.test(code),
+    false,
+    'the primitive removed in 0.2.1-rc.2 is not referenced anywhere',
+  )
 
   // The raw-text span is constructed once too. gapSpan (the whitespace between
   // two chips) is a *composition* piece, not a degradation, so it is allowed.

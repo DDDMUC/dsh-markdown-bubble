@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.1.4'
+    const PLUGIN_VERSION = '0.1.5'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
@@ -189,7 +189,27 @@ window.__ModuleLoader__.load({
      * @param text - raw logged message text.
      * @returns markdown source for the renderer.
      */
+    // Prepared markdown source, keyed by the raw text. A bubble repaints on
+    // every transcript update (a streaming turn re-renders constantly) and the
+    // preparation is a split/join plus a regex per line, so the same message was
+    // re-walked dozens of times while an unrelated row streamed. Cleared whole
+    // when it grows past the cap: the entries are strings, and a long transcript
+    // has far fewer distinct message texts than it has repaints.
+    const markdownSourceCache = new Map()
+    const MARKDOWN_CACHE_LIMIT = 64
+
     function toMarkdown(text) {
+      const key = typeof text === 'string' ? text : ''
+      const cached = markdownSourceCache.get(key)
+      if (cached !== undefined) return cached
+      const source = prepareMarkdown(key)
+      if (markdownSourceCache.size >= MARKDOWN_CACHE_LIMIT) markdownSourceCache.clear()
+      markdownSourceCache.set(key, source)
+      return source
+    }
+
+    /** The uncached preparation: CRLF, session wire links, soft breaks. */
+    function prepareMarkdown(text) {
       const normalized = text.replace(/\r\n?/gu, '\n')
       return walkOutsideFences(normalized, (line, next) => hardBreakLine(line.replace(SESSION_WIRE_RE, '$1'), next))
     }
@@ -267,12 +287,24 @@ window.__ModuleLoader__.load({
      * @param text - the message text.
      * @param referenceLabels - session recall labels.
      * @param skillNames - skill names.
-     * @param references - file/skill open callbacks.
+     * @param renderFactorySlot - the seat's Factory binding (chips + plain runs).
      * @returns the degraded body, never null and never a throw.
      */
-    function degradedBody(text, referenceLabels, skillNames, references) {
+    function degradedBody(text, referenceLabels, skillNames, renderFactorySlot) {
       try {
-        return primitives.projectUserText(text, referenceLabels, skillNames, 'skill', references)
+        if (typeof renderFactorySlot !== 'function') throw new Error('the seat handed over no renderFactorySlot')
+        // The projection moved into the host's own Factory in 0.2.1-rc.2
+        // (`conversation.user.text`, registered by dsh-client-ui-conversation;
+        // it owns the keyed child slot that renders a reference chip). The old
+        // public primitive `primitives.projectUserText` was REMOVED in the same
+        // release, which is why this call used to throw and chips degraded to
+        // plain text.
+        return renderFactorySlot('conversation.user.text', {
+          text,
+          facts: { sessionLabels: referenceLabels, skillNames },
+          interactive: true,
+          ellipsis: false,
+        })
       } catch (error) {
         warnOnce('the host user-text projection failed; showing raw text', error)
         return h('span', { className: 'dshmb-plain' }, text)
@@ -296,13 +328,12 @@ window.__ModuleLoader__.load({
      * @param t - the injected chat translator.
      * @param referenceLabels - session recall labels.
      * @param skillNames - skill names.
-     * @param references - file/skill open callbacks.
+     * @param renderFactorySlot - the seat's Factory binding.
      * @returns the composed body, or null when markdown cannot be produced.
      */
-    function safeMarkdownBody(text, t, referenceLabels, skillNames, references) {
+    function safeMarkdownBody(text, t, referenceLabels, skillNames, renderFactorySlot, labels) {
       try {
-        const labels = buildMarkdownLabels(t)
-        return composeUserMarkdown(text, labels, referenceLabels, skillNames, references)
+        return composeUserMarkdown(text, labels, referenceLabels, skillNames, renderFactorySlot)
       } catch (error) {
         warnOnce('markdown composition failed; showing the degraded projection', error)
         return null
@@ -341,14 +372,14 @@ window.__ModuleLoader__.load({
      * @param labels - markdown chrome labels.
      * @param referenceLabels - session recall labels the host associates with the message.
      * @param skillNames - skill names the host loaded for the message.
-     * @param references - file/skill open callbacks for clickable chips.
+     * @param renderFactorySlot - the seat's Factory binding.
      * @returns the composed body, or null for empty text.
      */
-    function composeUserMarkdown(text, labels, referenceLabels, skillNames, references) {
+    function composeUserMarkdown(text, labels, referenceLabels, skillNames, renderFactorySlot) {
       if (typeof text !== 'string' || text === '') return null
       // The same single degraded projection, so a projection that throws inside
       // composition degrades exactly as one that throws on the healthy path.
-      const projected = degradedBody(text, referenceLabels, skillNames, references)
+      const projected = degradedBody(text, referenceLabels, skillNames, renderFactorySlot)
       const pieces =
         react.isValidElement(projected) && projected.type === Fragment && Array.isArray(projected.props.children)
           ? projected.props.children
@@ -525,7 +556,12 @@ window.__ModuleLoader__.load({
       }
 
       render() {
-        return this.state.failed ? this.props.fallback : this.props.children
+        if (!this.state.failed) return this.props.children
+        const { fallback } = this.props
+        // A thunk is called only when it is actually needed: building the
+        // degraded projection on every healthy render is wasted work (and, on a
+        // host whose projection is gone, a caught throw every time).
+        return typeof fallback === 'function' ? fallback() : fallback
       }
     }
 
@@ -615,9 +651,24 @@ window.__ModuleLoader__.load({
       }
     }
 
-    function renderAttachmentEntry({ attachment, renderMessageImages, compactImages }) {
+    function renderAttachmentEntry({ attachment, renderFactorySlot, loadImage, compactImages }) {
       if (attachment.type === 'image') {
-        return h(Fragment, null, renderMessageImages({ images: [attachment.image], align: 'end', compact: compactImages }))
+        // The host's image gallery, through the SAME Factory seam as the text
+        // projection. The three routes that look obvious are all closed on
+        // 0.2.1-rc.2: the `renderMessageImages` seat prop is gone, the child
+        // slot `conversation.chat.user.images` cannot be declared by a plugin
+        // ("already declared (by factory conversation.chat.user.content)",
+        // verified live), and `@deepseek-ai/dsh-client-ui-attachment` exports
+        // only apply/inject. The gallery Factory is the one that works: the
+        // attachment plugin registers `conversation.images.content` at root
+        // scope and its own `MessageImages` is nothing but a call to it.
+        if (typeof renderFactorySlot !== 'function') throw new Error('the seat handed over no renderFactorySlot')
+        return h(Fragment, null, renderFactorySlot('conversation.images.content', {
+          images: [attachment.image],
+          loadImage,
+          align: 'end',
+          compact: compactImages,
+        }))
       }
       const file = attachment.file ?? {}
       const name = typeof file.name === 'string' ? file.name : ''
@@ -668,23 +719,31 @@ window.__ModuleLoader__.load({
     function renderMarkdownBubble(props) {
       const safeProps = props !== null && typeof props === 'object' ? props : {}
       const node = safeProps.node !== null && typeof safeProps.node === 'object' ? safeProps.node : {}
-      const renderMessageImages = safeProps.renderMessageImages
-      const openFile = safeProps.openFile
-      const openSkill = safeProps.openSkill
+      // The seat's props on 0.2.1-rc.2: the two renderer bindings and the image
+      // loader. The old `renderMessageImages` / `openFile` / `openSkill` pair is
+      // gone; images now go through the declared child slot and reference chips
+      // through the `conversation.user.text` Factory.
+      const renderFactorySlot = safeProps.renderFactorySlot
+      const renderSlot = safeProps.renderSlot
+      const loadImage = safeProps.loadImage
       const t = safeProps.t
       const data = node.data !== null && typeof node.data === 'object' ? node.data : {}
       const { text, attachments, rest } = contentParts(Array.isArray(data.content) ? data.content : [])
       const referenceLabels = Array.isArray(data.referenceLabels) ? data.referenceLabels : []
       const skillNames = Array.isArray(data.skillNames) ? data.skillNames : []
-      const references = react.useMemo(() => ({ openFile, openSkill }), [openFile, openSkill])
       const compactImages = attachments.length > 1
       const showBubble = text !== '' || rest.length > 0
+      // The host memoizes its own label object before handing it to MarkdownText
+      // (`ReasoningContent` does exactly this); a fresh object every render
+      // defeats that memoization and re-renders the whole markdown tree.
+      const labels = react.useMemo(() => buildMarkdownLabels(t), [t])
 
       // Never let composition throw out of this render — see safeMarkdownBody.
-      // One degraded body per render, shared by the composition guard and the
-      // boundary's own fallback; the last-resort net calls it too.
-      const body = safeMarkdownBody(text, t, referenceLabels, skillNames, references)
-      const degraded = degradedBody(text, referenceLabels, skillNames, references)
+      // ONE degraded body per render: it is the composition guard's projection
+      // and the boundary's fallback, so building it eagerly (as this used to)
+      // ran the projection twice per render and, on 0.2.1-rc.2, threw twice.
+      const body = safeMarkdownBody(text, t, referenceLabels, skillNames, renderFactorySlot, labels)
+      const degraded = () => degradedBody(text, referenceLabels, skillNames, renderFactorySlot)
 
       // The action strip leads the row in DOM order and is pushed below the
       // bubble by flex `order`. Sibling plugins pick their bar with
@@ -708,7 +767,8 @@ window.__ModuleLoader__.load({
                 h(AttachmentEntry, {
                   key: `${attachment.type}:${index}`,
                   attachment,
-                  renderMessageImages,
+                  renderFactorySlot,
+                  loadImage,
                   compactImages,
                 }),
               ),
@@ -717,7 +777,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dshmb-bubble' },
-              h(MarkdownBoundary, { key: text, fallback: degraded }, body === null ? degraded : body),
+              h(MarkdownBoundary, { key: text, fallback: degraded }, body === null ? degraded() : body),
               rest.map((block, index) =>
                 h(primitives.JsonBlock, {
                   key: 'rest' + index,
@@ -762,7 +822,7 @@ window.__ModuleLoader__.load({
         text,
         Array.isArray(data.referenceLabels) ? data.referenceLabels : [],
         Array.isArray(data.skillNames) ? data.skillNames : [],
-        { openFile: safeProps.openFile, openSkill: safeProps.openSkill },
+        safeProps.renderFactorySlot,
       )
       return h(
         'div',

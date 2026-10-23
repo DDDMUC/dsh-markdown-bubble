@@ -32,7 +32,7 @@ const MARKERS = [
   { needle: PLUGIN_VERSION, what: 'the client version constant' },
   { needle: "['user', 'steering']", what: 'the shadowed seats' },
   { needle: 'conversation.chat.node', what: 'the keyed seat slot' },
-  { needle: 'projectUserText', what: 'the host projection the composition calls' },
+  { needle: "renderFactorySlot('conversation.user.text'", what: 'the host text Factory the composition calls' },
   { needle: 'preserveHardBreaks', what: 'the soft-break promotion pass' },
   { needle: 'dshmb-md', what: 'the markdown container class' },
   { needle: 'dshmb_actions', what: 'the action strip sibling plugins inject into' },
