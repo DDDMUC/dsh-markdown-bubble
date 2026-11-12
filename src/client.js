@@ -76,13 +76,25 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
   background:transparent!important;
   /* 静默态：只有顶上一条横线，没有框。 */
   border:0!important;
-  border-top:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
-  /* 圆角从一开始就在：静默态的顶线两端随圆角收进去，和悬浮后的整框同长。 */
+  /* 静默态用一条独立的直线（伪元素），不是 border-top：带圆角的 border-top
+     会在两端拐下去，看起来是弧线而不是横线。 */
+  border:0!important;
   border-radius:var(--dsw-radius-xl,16px)!important;
+  position:relative;
   padding:12px 16px!important;
   text-align:left!important;
   transition:border-color .12s ease, border-radius .12s ease, box-shadow .12s ease;
 }
+/* 静默顶线：两端内收一个圆角半径，长度 == 悬浮框顶边的直线段。 */
+body[data-dshmb-layout="full"] .dshmb-bubble::before{
+  content:"";position:absolute;left:16px;right:16px;top:0;height:1px;
+  background:var(--dsw-alias-border-l2,rgba(16,24,40,.16));
+  transition:opacity .12s ease;
+}
+body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble::before,
+body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble::before,
+body[data-dshmb-layout="full"] .dshmb-bubble:hover::before{opacity:0}
+
 /* 悬浮态：整框出现（四边 + 圆角），移开又只剩顶线。 */
 body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
