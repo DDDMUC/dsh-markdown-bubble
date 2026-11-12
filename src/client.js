@@ -87,7 +87,8 @@ body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] .dshmb-bubble:hover{
   border:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
-  border-radius:var(--dsw-radius-xl,16px)!important;
+  /* 半径必须和静默态一致：一改圆角，顶线两端被吃掉，看起来就「变短」了。 */
+  border-radius:0!important;
 }
 body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
 /* 框要「高」一点：正文照常排版，框底多留 20px 呼吸空间。 */
