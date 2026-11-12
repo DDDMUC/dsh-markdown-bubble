@@ -80,11 +80,8 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
   text-align:left!important;
 }
 body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
-/* 收紧：正文最后一段不带下边距，空附件区不占高度，框底不留多余空白。 */
-body[data-dshmb-layout="full"] .dshmb-md > *:last-child{margin-bottom:0!important}
-body[data-dshmb-layout="full"] .dshmb-md p:last-child{margin-bottom:0!important}
-body[data-dshmb-layout="full"] .dshmb-attachments:empty{display:none!important}
-body[data-dshmb-layout="full"] .dshmb-bubble{min-height:0!important}
+/* 框要「高」一点：正文照常排版，框底多留 20px 呼吸空间。 */
+body[data-dshmb-layout="full"] .dshmb-bubble{padding-bottom:20px!important}
 body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!important}
 /* 抬头：User · 03:06 */
 .dshmb-pro-head{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#81858c);margin:0 0 6px}
