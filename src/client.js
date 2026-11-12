@@ -66,10 +66,65 @@ window.__ModuleLoader__.load({
      * 细分隔线。规则只碰本插件自己的类名，绝不改宿主命名的节点。
      */
     const LAYOUT_CSS = `
-body[data-dshmb-layout="full"] .dshmb-stack{max-width:100%!important;width:100%!important;align-items:stretch!important;padding-bottom:14px!important;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.12));margin-bottom:14px!important}
-body[data-dshmb-layout="full"] .dshmb-bubble{background:none!important;border:none!important;border-radius:0!important;padding:0!important;max-width:100%!important;width:100%!important;box-sizing:border-box}
+/* Pro（模仿 Google AI Studio）：整条用户消息是一个和输入框同宽的圆角框——
+   细边框、透明底，框内第一行是「User · 时:分」，正文在下面。 */
+body[data-dshmb-layout="full"] .dshmb-stack{max-width:100%!important;width:100%!important;align-items:stretch!important}
+body[data-dshmb-layout="full"] .dshmb-bubble{
+  display:block!important;
+  width:100%!important;max-width:100%!important;
+  box-sizing:border-box;
+  background:transparent!important;
+  border:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
+  border-radius:var(--dsw-radius-xl,16px)!important;
+  padding:12px 16px!important;
+  text-align:left!important;
+}
+body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
+/* 收紧：正文最后一段不带下边距，空附件区不占高度，框底不留多余空白。 */
+body[data-dshmb-layout="full"] .dshmb-md > *:last-child{margin-bottom:0!important}
+body[data-dshmb-layout="full"] .dshmb-md p:last-child{margin-bottom:0!important}
+body[data-dshmb-layout="full"] .dshmb-attachments:empty{display:none!important}
+body[data-dshmb-layout="full"] .dshmb-bubble{min-height:0!important}
 body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!important}
+/* 抬头：User · 03:06 */
+.dshmb-pro-head{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#81858c);margin:0 0 6px}
+.dshmb-pro-head b{font-weight:500;color:var(--dsw-alias-label-secondary,#4b5872)}
 `
+
+    /**
+     * Pro 的抬头：`User · 03:06`。
+     *
+     * 时间不自己算——宿主把消息时间写在时钟元素的 `data-clock` 上；拷贝它，
+     * 就不会和官方的显示口径（今天/月日/年月日）分叉。
+     *
+     * @param {Element} row - 消息行。
+     */
+    function decorateProHeader(row) {
+      if (typeof document === 'undefined' || !document.body) return
+      const full = document.body.dataset.dshmbLayout === 'full'
+      const bubble = row.querySelector('.dshmb-bubble')
+      if (!bubble) return
+      const existing = bubble.querySelector(':scope > .dshmb-pro-head')
+      if (!full) {
+        if (existing) existing.remove()
+        return
+      }
+      if (existing) return
+      const head = document.createElement('div')
+      head.className = 'dshmb-pro-head'
+      const who = document.createElement('b')
+      who.textContent = row.getAttribute('data-chat-flow-kind') === 'steering' ? 'You' : 'User'
+      head.appendChild(who)
+      bubble.insertBefore(head, bubble.firstChild)
+    }
+
+    /** 扫一遍所有用户行，补/撤 Pro 抬头。 */
+    function decorateAllRows() {
+      if (typeof document === 'undefined') return
+      for (const row of document.querySelectorAll('[data-chat-flow-kind="user"], [data-chat-flow-kind="steering"]')) {
+        decorateProHeader(row)
+      }
+    }
 
     /**
      * 读宿主记住的外观；失败一律当默认（气泡）。
@@ -955,10 +1010,31 @@ body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
       void readLayout().then((layout) => {
         try {
           if (typeof document !== 'undefined' && document.body) document.body.dataset.dshmbLayout = layout
+          decorateAllRows()
         } catch {
           /* 没有 body 就等着宿主自己渲染 */
         }
       })
+      // 消息行会随时重渲染：轻量地补抬头，不监听整棵文档的文本变化。
+      let scheduled = false
+      const schedule = () => {
+        if (scheduled) return
+        scheduled = true
+        const run = () => {
+          scheduled = false
+          decorateAllRows()
+        }
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(run)
+        else setTimeout(run, 16)
+      }
+      const observer = typeof MutationObserver === 'function' ? new MutationObserver(schedule) : null
+      if (observer !== null) observer.observe(document.body, { childList: true, subtree: true })
+      ctx.effect(
+        () => () => {
+          if (observer !== null) observer.disconnect()
+        },
+        NS + ': pro header observer',
+      )
       for (const key of SEATS) {
         ctx.slots.inject('conversation.chat.node', () =>
           ctx.slots.register(

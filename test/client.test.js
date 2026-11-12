@@ -598,8 +598,10 @@ test('the plugin never hides a row, so it needs no HIDE_OWNERS guard', () => {
   assert.ok(!/data-dshdt-hidden|data-dshet-hidden|data-dsrr-hidden/.test(SOURCE))
   assert.ok(!/style\.display/.test(SOURCE))
   assert.ok(!/foreignHideOn|HIDE_OWNERS/.test(SOURCE))
-  const withoutStyleTag = SOURCE.replace(/tag\.remove\(\)/g, '')
-  assert.ok(!/\.remove\(\)/.test(withoutStyleTag), 'the only node removal is the plugin own style tag')
+  // Two removals are ours: the injected <style> tag and the `User · 03:06`
+  // header this plugin inserted itself. No host node is ever removed.
+  const withoutOwnNodes = SOURCE.replace(/tag\.remove\(\)/g, '').replace(/existing\.remove\(\)/g, '')
+  assert.ok(!/\.remove\(\)/.test(withoutOwnNodes), 'the only node removals are nodes this plugin created')
 })
 
 // --- I6: web / desktop parity ------------------------------------------------
