@@ -138,9 +138,17 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
       head.appendChild(who)
       // 本行的动作入口（编辑 / 重跑 / 删除）搬进抬头行右侧——只搬本行自己的，
       // 绝不跨行，否则会像之前那样把上一行的删除按钮吸过来。
+      // 动作入口可能挂在本行里，也可能挂在本行后面那条动作条行里：两处都看，
+      // 但只看「本行」和「紧邻的下一行」，绝不跨到别的消息上。
+      const scope = [row, row.nextElementSibling].filter((element) => element !== null && element !== undefined)
       for (const selector of ['.dshet-action-host', '.dsrr-action-host', '.dshdt-action-host']) {
-        const host = row.querySelector(selector)
-        if (host !== null && !head.contains(host)) {
+        let host = null
+        for (const container of scope) {
+          const found = container.querySelector(selector)
+          if (found !== null) { host = found; break }
+        }
+        if (host === null) continue
+        if (!head.contains(host)) {
           host.style.position = ''
           host.style.top = ''
           host.style.right = ''
