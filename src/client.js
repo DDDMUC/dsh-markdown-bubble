@@ -68,8 +68,8 @@ window.__ModuleLoader__.load({
     const LAYOUT_CSS = `
 /* Pro（模仿 Google AI Studio）：整条用户消息是一个和输入框同宽的圆角框——
    细边框、透明底，框内第一行是「User · 时:分」，正文在下面。 */
-body[data-dshmb-layout="full"] .dshmb-stack{max-width:100%!important;width:100%!important;align-items:stretch!important}
-body[data-dshmb-layout="full"] .dshmb-bubble{
+html[data-dshmb-layout="full"] .dshmb-stack{max-width:100%!important;width:100%!important;align-items:stretch!important}
+html[data-dshmb-layout="full"] .dshmb-bubble{
   display:block!important;
   width:100%!important;max-width:100%!important;
   box-sizing:border-box;
@@ -87,26 +87,26 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
 }
 
 /* 静默顶线：两端内收一个圆角半径，长度 == 悬浮框顶边的直线段。 */
-body[data-dshmb-layout="full"] .dshmb-bubble::before{
+html[data-dshmb-layout="full"] .dshmb-bubble::before{
   content:"";position:absolute;left:16px;right:16px;top:0;height:1px;
   background:var(--dsw-alias-border-l2,rgba(16,24,40,.16));
   transition:opacity .12s ease;
 }
-body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble::before,
-body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble::before,
-body[data-dshmb-layout="full"] .dshmb-bubble:hover::before{opacity:0}
+html[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble::before,
+html[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble::before,
+html[data-dshmb-layout="full"] .dshmb-bubble:hover::before{opacity:0}
 
 /* 悬浮态：整框出现（四边 + 圆角），移开又只剩顶线。 */
-body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
-body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
-body[data-dshmb-layout="full"] .dshmb-bubble:hover{
+html[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
+html[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
+html[data-dshmb-layout="full"] .dshmb-bubble:hover{
   border-color:var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
   border-radius:var(--dsw-radius-xl,16px)!important;
 }
-body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
+html[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
 /* 框要「高」一点：正文照常排版，框底多留 20px 呼吸空间。 */
-body[data-dshmb-layout="full"] .dshmb-bubble{padding-bottom:20px!important}
-body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!important}
+html[data-dshmb-layout="full"] .dshmb-bubble{padding-bottom:20px!important}
+html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!important}
 /* 抬头：User · 03:06 */
 .dshmb-pro-head{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#81858c);margin:0 0 6px}
 .dshmb-pro-head b{font-weight:500;color:var(--dsw-alias-label-secondary,#4b5872)}
@@ -158,6 +158,32 @@ body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
         decorateProHeader(row)
       }
     }
+
+    /** 本地缓存键：让下一帧之前就能知道外观，避免新消息先画成气泡再跳变。 */
+    const LAYOUT_CACHE_KEY = 'dsh-markdown-bubble:layout'
+
+    /**
+     * 同步地把外观标记打到 `<html>` 上。
+     *
+     * 宿主配置是异步读的（一次 fetch），但新消息到来的第一帧必须已经是正确的
+     * 外观，否则会「先画成右边的气泡，闪一下才变成 Pro」。所以真实来源仍是宿主
+     * 配置，这里只用一个本地缓存做首帧的提前量，读到配置后再校正。
+     *
+     * @param {'bubble' | 'full' | null} [value] - 要写入的外观；省略则读缓存。
+     */
+    function markLayout(value) {
+      if (typeof document === 'undefined') return
+      try {
+        const layout = value ?? (typeof localStorage !== 'undefined' ? localStorage.getItem(LAYOUT_CACHE_KEY) : null)
+        if (layout === 'full') document.documentElement.dataset.dshmbLayout = 'full'
+        else if (layout === 'bubble') document.documentElement.dataset.dshmbLayout = 'bubble'
+      } catch {
+        /* 没有 document/localStorage 就交给宿主 */
+      }
+    }
+
+    // 模块加载即执行：赶在第一帧之前。
+    markLayout()
 
     /**
      * 读宿主记住的外观；失败一律当默认（气泡）。
@@ -1042,11 +1068,12 @@ body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
       // 读到了再切换，避免闪一下错的样子。
       void readLayout().then((layout) => {
         try {
-          if (typeof document !== 'undefined' && document.body) document.body.dataset.dshmbLayout = layout
-          decorateAllRows()
+          if (typeof localStorage !== 'undefined') localStorage.setItem(LAYOUT_CACHE_KEY, layout)
         } catch {
-          /* 没有 body 就等着宿主自己渲染 */
+          /* 存不进去也没关系 */
         }
+        markLayout(layout)
+        decorateAllRows()
       })
       // 消息行会随时重渲染：轻量地补抬头，不监听整棵文档的文本变化。
       let scheduled = false
@@ -1116,9 +1143,15 @@ body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
           .then(async (response) => {
             const data = await response.json().catch(() => ({}))
             if (!response.ok || data.ok !== true) throw new Error(data.error ? String(data.error) : `HTTP ${response.status}`)
-            setLayout(data.layout === 'full' ? 'full' : 'bubble')
+            const nextLayout = data.layout === 'full' ? 'full' : 'bubble'
+            setLayout(nextLayout)
             setError('')
-            if (typeof document !== 'undefined' && document.body) document.body.dataset.dshmbLayout = data.layout === 'full' ? 'full' : 'bubble'
+            try {
+              if (typeof localStorage !== 'undefined') localStorage.setItem(LAYOUT_CACHE_KEY, nextLayout)
+            } catch {
+              /* 存不进去也没关系 */
+            }
+            markLayout(nextLayout)
           })
           .catch((failure) => setError(String(failure && failure.message ? failure.message : failure)))
       }
