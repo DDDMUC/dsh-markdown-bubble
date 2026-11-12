@@ -85,20 +85,6 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
   text-align:left!important;
   transition:border-color .12s ease, border-radius .12s ease, box-shadow .12s ease;
 }
-/* Pro 模式下三个动作入口（编辑 / 重跑 / 删除）挪进框内右上角，
-   不再悬在框外、压住顶边。 */
-body[data-dshmb-layout="full"] [data-chat-flow-kind="user"],
-body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]{position:relative}
-body[data-dshmb-layout="full"] .dshet-action-host,
-body[data-dshmb-layout="full"] .dsrr-action-host,
-body[data-dshmb-layout="full"] .dshdt-action-host{
-  position:absolute!important;
-  top:8px!important; right:12px!important; left:auto!important; bottom:auto!important;
-  margin:0!important;
-  z-index:2;
-}
-/* 给右上角的按钮留出空间，正文不会钻到它们下面。 */
-body[data-dshmb-layout="full"] .dshmb-bubble{padding-right:132px!important}
 
 /* 静默顶线：两端内收一个圆角半径，长度 == 悬浮框顶边的直线段。 */
 body[data-dshmb-layout="full"] .dshmb-bubble::before{
@@ -122,7 +108,7 @@ body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
 body[data-dshmb-layout="full"] .dshmb-bubble{padding-bottom:20px!important}
 body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!important}
 /* 抬头：User · 03:06 */
-.dshmb-pro-head{display:flex;align-items:center;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#81858c);margin:0 0 6px}
+.dshmb-pro-head{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;line-height:18px;color:var(--dsw-alias-label-tertiary,#81858c);margin:0 0 6px}
 .dshmb-pro-head b{font-weight:500;color:var(--dsw-alias-label-secondary,#4b5872)}
 `
 
@@ -150,6 +136,18 @@ body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
       const who = document.createElement('b')
       who.textContent = row.getAttribute('data-chat-flow-kind') === 'steering' ? 'You' : 'User'
       head.appendChild(who)
+      // 本行的动作入口（编辑 / 重跑 / 删除）搬进抬头行右侧——只搬本行自己的，
+      // 绝不跨行，否则会像之前那样把上一行的删除按钮吸过来。
+      for (const selector of ['.dshet-action-host', '.dsrr-action-host', '.dshdt-action-host']) {
+        const host = row.querySelector(selector)
+        if (host !== null && !head.contains(host)) {
+          host.style.position = ''
+          host.style.top = ''
+          host.style.right = ''
+          host.style.left = ''
+          head.appendChild(host)
+        }
+      }
       bubble.insertBefore(head, bubble.firstChild)
     }
 
