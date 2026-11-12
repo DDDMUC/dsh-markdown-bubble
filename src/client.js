@@ -86,6 +86,15 @@ html[data-dshmb-layout="full"] .dshmb-bubble{
   transition:border-color .12s ease, border-radius .12s ease, box-shadow .12s ease;
 }
 
+/* Pro 模式下把三个插件入口的图标拉到和宿主按钮同尺寸（16px），
+   它们各自的默认值在 13–15px，混在宿主那排里就显得小一圈。 */
+html[data-dshmb-layout="full"] .dshet-action svg,
+html[data-dshmb-layout="full"] .dsrr-action svg,
+html[data-dshmb-layout="full"] .dshdt-action svg{width:16px!important;height:16px!important}
+html[data-dshmb-layout="full"] .dshet-action,
+html[data-dshmb-layout="full"] .dsrr-action,
+html[data-dshmb-layout="full"] .dshdt-action{width:28px!important;height:28px!important;padding:6px!important}
+
 /* 静默顶线：两端内收一个圆角半径，长度 == 悬浮框顶边的直线段。 */
 html[data-dshmb-layout="full"] .dshmb-bubble::before{
   content:"";position:absolute;left:16px;right:16px;top:0;height:1px;
