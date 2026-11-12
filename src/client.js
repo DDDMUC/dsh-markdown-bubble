@@ -76,9 +76,9 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
   background:transparent!important;
   /* 静默态：只有顶上一条横线，没有框。 */
   border:0!important;
-  /* 静默态用一条独立的直线（伪元素），不是 border-top：带圆角的 border-top
-     会在两端拐下去，看起来是弧线而不是横线。 */
-  border:0!important;
+  /* 静默态也有 1px 的边框，只是颜色透明——这样悬浮时只过渡颜色，
+     不会出现「先黑后灰」的闪色，也不会因为突然多出 1px 而跳动。 */
+  border:1px solid transparent!important;
   border-radius:var(--dsw-radius-xl,16px)!important;
   position:relative;
   padding:12px 16px!important;
@@ -99,7 +99,7 @@ body[data-dshmb-layout="full"] .dshmb-bubble:hover::before{opacity:0}
 body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] .dshmb-bubble:hover{
-  border:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
+  border-color:var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
   border-radius:var(--dsw-radius-xl,16px)!important;
 }
 body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
