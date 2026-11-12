@@ -74,10 +74,20 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
   width:100%!important;max-width:100%!important;
   box-sizing:border-box;
   background:transparent!important;
-  border:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
-  border-radius:var(--dsw-radius-xl,16px)!important;
+  /* 静默态：只有顶上一条横线，没有框。 */
+  border:0!important;
+  border-top:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
+  border-radius:0!important;
   padding:12px 16px!important;
   text-align:left!important;
+  transition:border-color .12s ease, border-radius .12s ease, box-shadow .12s ease;
+}
+/* 悬浮态：整框出现（四边 + 圆角），移开又只剩顶线。 */
+body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
+body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
+body[data-dshmb-layout="full"] .dshmb-bubble:hover{
+  border:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
+  border-radius:var(--dsw-radius-xl,16px)!important;
 }
 body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
 /* 框要「高」一点：正文照常排版，框底多留 20px 呼吸空间。 */
