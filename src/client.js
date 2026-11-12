@@ -77,7 +77,8 @@ body[data-dshmb-layout="full"] .dshmb-bubble{
   /* 静默态：只有顶上一条横线，没有框。 */
   border:0!important;
   border-top:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
-  border-radius:0!important;
+  /* 圆角从一开始就在：静默态的顶线两端随圆角收进去，和悬浮后的整框同长。 */
+  border-radius:var(--dsw-radius-xl,16px)!important;
   padding:12px 16px!important;
   text-align:left!important;
   transition:border-color .12s ease, border-radius .12s ease, box-shadow .12s ease;
@@ -87,8 +88,7 @@ body[data-dshmb-layout="full"] [data-chat-flow-kind="user"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] [data-chat-flow-kind="steering"]:hover .dshmb-bubble,
 body[data-dshmb-layout="full"] .dshmb-bubble:hover{
   border:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.16))!important;
-  /* 半径必须和静默态一致：一改圆角，顶线两端被吃掉，看起来就「变短」了。 */
-  border-radius:0!important;
+  border-radius:var(--dsw-radius-xl,16px)!important;
 }
 body[data-dshmb-layout="full"] .dshmb-md{text-align:left!important}
 /* 框要「高」一点：正文照常排版，框底多留 20px 呼吸空间。 */
