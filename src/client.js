@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.1.5'
+    const PLUGIN_VERSION = '0.1.6'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
@@ -58,6 +58,33 @@ window.__ModuleLoader__.load({
     const CSS_TAG = NS + '/markdown-bubble.css'
 
     /** Chat-node seats this renderer replaces; the host serves both with one view. */
+    /**
+     * 外观（layout）覆盖。
+     *
+     * 默认（`bubble`）一条规则都不命中，现有的气泡外观分毫不变；只有页面被
+     * 标记成 `full` 时才换成长条记录式：铺满对话列、去掉气泡底色、下方一条
+     * 细分隔线。规则只碰本插件自己的类名，绝不改宿主命名的节点。
+     */
+    const LAYOUT_CSS = `
+body[data-dshmb-layout="full"] .dshmb-stack{max-width:100%!important;width:100%!important;align-items:stretch!important;padding-bottom:14px!important;border-bottom:1px solid var(--dsw-alias-border-l2,rgba(16,24,40,.12));margin-bottom:14px!important}
+body[data-dshmb-layout="full"] .dshmb-bubble{background:none!important;border:none!important;border-radius:0!important;padding:0!important;max-width:100%!important;width:100%!important;box-sizing:border-box}
+body[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!important}
+`
+
+    /**
+     * 读宿主记住的外观；失败一律当默认（气泡）。
+     * @returns {Promise<'bubble' | 'full'>} 外观。
+     */
+    async function readLayout() {
+      try {
+        const response = await fetch('/api/dsh-markdown-bubble/config', { headers: { accept: 'application/json' } })
+        const data = await response.json()
+        return data && data.layout === 'full' ? 'full' : 'bubble'
+      } catch {
+        return 'bubble'
+      }
+    }
+
     const SEATS = ['user', 'steering']
 
     // Seat priority: the host's default is 0, the plugin sits below it, and it
@@ -902,7 +929,7 @@ window.__ModuleLoader__.load({
       const tag = document.createElement('style')
       tag.dataset.plugin = NS
       tag.dataset.pluginCss = CSS_TAG
-      tag.textContent = CSS
+      tag.textContent = CSS + LAYOUT_CSS
       document.head.appendChild(tag)
     }
 
@@ -923,6 +950,15 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       injectStyles()
+      // 外观由宿主记住（跨窗口、跨重启一致）；读到之前先按默认气泡渲染，
+      // 读到了再切换，避免闪一下错的样子。
+      void readLayout().then((layout) => {
+        try {
+          if (typeof document !== 'undefined' && document.body) document.body.dataset.dshmbLayout = layout
+        } catch {
+          /* 没有 body 就等着宿主自己渲染 */
+        }
+      })
       for (const key of SEATS) {
         ctx.slots.inject('conversation.chat.node', () =>
           ctx.slots.register(
@@ -948,7 +984,73 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /**
+     * 设置卡：选择气泡外观。
+     *
+     * 写入宿主配置（跨窗口、跨重启），并立刻改页面标记——两种外观都是同一份
+     * 渲染管线，切换不需要重载。
+     *
+     * @returns {object} React 元素。
+     */
+    function ConfigCard() {
+      const [layout, setLayout] = react.useState(null)
+      const [error, setError] = react.useState('')
+      react.useEffect(() => {
+        void readLayout().then(setLayout)
+      }, [])
+      const choose = (next) => {
+        fetch('/api/dsh-markdown-bubble/config', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ layout: next }),
+        })
+          .then(async (response) => {
+            const data = await response.json().catch(() => ({}))
+            if (!response.ok || data.ok !== true) throw new Error(data.error ? String(data.error) : `HTTP ${response.status}`)
+            setLayout(data.layout === 'full' ? 'full' : 'bubble')
+            setError('')
+            if (typeof document !== 'undefined' && document.body) document.body.dataset.dshmbLayout = data.layout === 'full' ? 'full' : 'bubble'
+          })
+          .catch((failure) => setError(String(failure && failure.message ? failure.message : failure)))
+      }
+      const option = (value, title, hint) =>
+        react.createElement(
+          'button',
+          {
+            key: value,
+            type: 'button',
+            onClick: () => choose(value),
+            style: {
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'flex-start',
+              gap: 2,
+              padding: '8px 12px',
+              borderRadius: 8,
+              cursor: 'pointer',
+              textAlign: 'left',
+              border: '1px solid ' + (layout === value ? 'var(--dsw-alias-button-primary-fill,#4d6bfe)' : 'var(--dsw-alias-border-l2,rgba(16,24,40,.16))'),
+              background: layout === value ? 'var(--dsw-alias-bg-layer-2,transparent)' : 'transparent',
+              color: 'inherit',
+            },
+          },
+          [
+            react.createElement('span', { key: 't', style: { fontSize: 13, fontWeight: 600 } }, title),
+            react.createElement('span', { key: 'h', style: { fontSize: 12, opacity: 0.7 } }, hint),
+          ],
+        )
+      return react.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } }, [
+        react.createElement('div', { key: 'title', style: { fontSize: 13, fontWeight: 600 } }, '气泡外观'),
+        react.createElement('div', { key: 'options', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
+          option('bubble', '气泡 Lite', '右对齐气泡，宽度约对话列的 70%（默认）'),
+          option('full', '气泡 Pro', '铺满对话列、与输入框同宽，无气泡底色'),
+        ]),
+        error === '' ? null : react.createElement('p', { key: 'err', style: { fontSize: 12, color: 'var(--dsw-alias-state-error-primary,#c93a31)', margin: 0 } }, `保存失败：${error}`),
+      ])
+    }
+
     exports.apply = apply
+    exports.ConfigCard = ConfigCard
     exports.inject = ['slots', 'locale']
     exports.PLUGIN_VERSION = PLUGIN_VERSION
     exports.SEATS = SEATS
