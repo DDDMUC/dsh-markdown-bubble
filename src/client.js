@@ -1207,7 +1207,7 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
       return react.createElement('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } }, [
         react.createElement('div', { key: 'title', style: { fontSize: 13, fontWeight: 600 } }, '气泡外观'),
         react.createElement('div', { key: 'options', style: { display: 'flex', gap: 8, flexWrap: 'wrap' } }, [
-          option('bubble', '气泡 Lite', '右对齐气泡，宽度约对话列的 70%（默认）'),
+          option('bubble', '气泡 Lite', '右对齐气泡，宽度约对话列的 70%'),
           option('full', '气泡 Pro', '铺满对话列、与输入框同宽，无气泡底色'),
         ]),
         error === '' ? null : react.createElement('p', { key: 'err', style: { fontSize: 12, color: 'var(--dsw-alias-state-error-primary,#c93a31)', margin: 0 } }, `保存失败：${error}`),
