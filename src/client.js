@@ -1121,6 +1121,17 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
         )
       }
 
+      // 独立安装时也要有设置卡：插件页的 `plugins.bundle.config`，
+      // key 用包名，和 dsh-context 等插件同一约定。
+      if (ctx.slots !== null && ctx.slots !== undefined && typeof ctx.slots.inject === 'function') {
+        ctx.slots.inject('plugins.bundle.config', () =>
+          ctx.slots.register(
+            { name: 'plugins.bundle.config', key: 'dsh-markdown-bubble', locale: NS },
+            ConfigCard,
+          ),
+        )
+      }
+
       globalThis[DEBUG_KEY] = { version: PLUGIN_VERSION, seats: SEATS.slice() }
 
       ctx.effect(

@@ -446,15 +446,15 @@ test('apply shadows both sent-message seats at a lower priority', () => {
   }
   exports.apply(ctx)
 
-  assert.equal(injections.length, 2)
+  // 两个座位 + 插件自己的设置卡（`plugins.bundle.config`）。
+  assert.equal(injections.length, 3)
   const registrations = []
   ctx.slots.register = (options, component) => {
     registrations.push({ options, component })
     return () => {}
   }
   for (const injection of injections) {
-    assert.equal(injection.key, 'conversation.chat.node')
-    injection.callback()
+    if (injection.key === 'conversation.chat.node') injection.callback()
   }
   assert.deepEqual(
     registrations.map((entry) => entry.options.key),
