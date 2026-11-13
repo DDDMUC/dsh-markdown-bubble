@@ -105,6 +105,9 @@ html[data-dshmb-layout="full"] [data-chat-flow-kind="steering"] [data-message-bu
 }
 html[data-dshmb-layout="full"] [data-chat-flow-kind="user"] [data-message-bubble]{position:relative}
 
+/* 一轮结束后的动作条与下一轮之间的呼吸：宿主默认只留 4px，太挤。 */
+html[data-dshmb-layout="full"] [data-chat-flow-kind="turn-tail"]{margin-bottom:12px!important}
+
 /* 静默顶线：两端内收一个圆角半径，长度 == 悬浮框顶边的直线段。 */
 html[data-dshmb-layout="full"] .dshmb-bubble::before{
   content:"";position:absolute;left:16px;right:16px;top:0;height:1px;
