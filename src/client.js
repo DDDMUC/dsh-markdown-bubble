@@ -86,6 +86,25 @@ html[data-dshmb-layout="full"] .dshmb-bubble{
   transition:border-color .12s ease, border-radius .12s ease, box-shadow .12s ease;
 }
 
+/* 刚发出、还没落盘的那一帧由宿主自己的 UserMessageBubble 画（data-message-bubble），
+   它没有 .dshmb-* 类。这里把它也按 Pro 的样子铺开，避免「先闪一下右侧气泡」。 */
+html[data-dshmb-layout="full"] [data-chat-flow-kind="user"] [data-message-bubble],
+html[data-dshmb-layout="full"] [data-chat-flow-kind="steering"] [data-message-bubble]{
+  width:100%!important;max-width:100%!important;
+  box-sizing:border-box;
+  background:transparent!important;
+  border:1px solid transparent!important;
+  border-radius:var(--dsw-radius-xl,16px)!important;
+  padding:12px 16px!important;
+  text-align:left!important;
+}
+html[data-dshmb-layout="full"] [data-chat-flow-kind="user"] [data-message-bubble]::before,
+html[data-dshmb-layout="full"] [data-chat-flow-kind="steering"] [data-message-bubble]::before{
+  content:"";position:absolute;left:16px;right:16px;top:0;height:1px;
+  background:var(--dsw-alias-border-l2,rgba(16,24,40,.16));
+}
+html[data-dshmb-layout="full"] [data-chat-flow-kind="user"] [data-message-bubble]{position:relative}
+
 /* 静默顶线：两端内收一个圆角半径，长度 == 悬浮框顶边的直线段。 */
 html[data-dshmb-layout="full"] .dshmb-bubble::before{
   content:"";position:absolute;left:16px;right:16px;top:0;height:1px;
