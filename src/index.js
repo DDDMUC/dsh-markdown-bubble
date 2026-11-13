@@ -18,7 +18,7 @@ import path from 'node:path'
 export const PLUGIN_ID = 'dsh-markdown-bubble'
 
 /** 与 package.json / src/client.js 保持同步。 */
-export const PLUGIN_VERSION = '0.1.6'
+export const PLUGIN_VERSION = '0.2.0'
 
 /** Cordis 插件名；bundle patch 用这个名字解析包。 */
 export const name = PLUGIN_ID
