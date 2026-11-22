@@ -33,7 +33,7 @@ DSH 的用户消息气泡按原样显示你输入的文字（`white-space: pre-w
 
 - **官方座位替换** —— 经 `ctx.slots` 在 `conversation.chat.node` 的 `user` / `steering` 两个 keyed 座位上以 `priority: -1` 遮蔽宿主渲染器；停用/卸载即恢复宿主自己的气泡，不改源码、不动日志
 - **宿主同款渲染** —— 不自己造 Markdown 管线，直接调用 `@deepseek-ai/dsh-client-ui-primitives` 的 `MarkdownText`：与助手回复同一套解析、高亮、表格、公式与代码卡
-- **引用 chip 保留** —— 调用宿主自己的文本工厂槽 `conversation.user.text`（0.2.1 起投影就住在那里），返回的片段按 chip / 纯文本拆分：chip 仍是可点击的文件 / 技能 chip，纯文本段逐个进 Markdown
+- **引用 chip 保留（宿主渲染，不是复制）** —— 用宿主自己的 `uiConversation.userText` 求值器取得消息的节点边界（session / file / folder / skill / command / quote / secret），再把每个引用 token 交回文本工厂槽 `conversation.user.text` 渲染：session chip 的蓝色、file chip 的点击打开与右键菜单、skill 的预览入口全部由宿主自己的 keyed renderer 决定；纯文本段逐个进 Markdown。插件不再靠投影结果里的 `data-ref-chip` 猜 chip —— 0.2.x 的工厂返回的是 `<FactoryOutlet>`，猜不到，这正是 0.1.5 之后 chip 退化成纯文本的原因。
 - **操作条与三方插件兼容** —— 时间 + 复制按钮用官方 primitives 重建，操作条保留 `_actions` / `_action` 类名后缀与 `data-clock` 锚点；dsh-edit-turn、dsh-delete-turn、dsh-rerun-turn 的按钮注入照常工作
 - **附件与补充块** —— 图片走官方的图片画廊工厂槽 `conversation.images.content`，文件卡、引用摘要、`JsonBlock` 补充块与宿主同款
 - **软换行保留** —— 仅对围栏代码之外的续行补 GFM 两空格硬换行；代码块一个字节不动，缩进代码与表格行不误伤
@@ -75,7 +75,7 @@ const a = 1
 
 1. **座位遮蔽**：浏览器半区 `ctx.slots.inject('conversation.chat.node', …)` 注册 `user` 与 `steering` 两个 keyed 条目，`priority: -1` 低于宿主默认的 `0`（同 key 同优先级会抛错，最低者渲染）。
 2. **内容拆分**：从节点数据取 `content`，按宿主 `UserStyleBubble` 的同一规则拆成文本 / 图片附件 / 文件卡 / 剩余块。
-3. **chip 感知的 Markdown 合成**：调用宿主投影 `projectUserText`，把返回片段分成 chip 与纯文本；纯文本段逐个经 `MarkdownText` 渲染，chip 原样成为可点击元素。
+3. **宿主规则分段**：调用 `uiConversation.userText.createEvaluator()`（宿主聊天、引用、技能、引用块、密钥插件注册进同一注册表的规则）得到与宿主气泡完全一致的节点边界；纯文本节点进 `MarkdownText`，引用节点按原始 token 交回 `conversation.user.text` 工厂，由宿主自己的 keyed renderer 画成 chip——外观与交互都不经过本插件。
 4. **源码预处理**：CRLF 归一、会话回顾 wire 链接（`@[label](dsh-session:…)`）还原为显示名、围栏代码之外的续行补两空格硬换行。
 5. **外壳复用**：行 / 堆栈 / 气泡 / 文件卡的度量值逐条对齐宿主样式表（`MessageItem.module.css`、`MessageIconActions.module.css`），颜色全部走主题 token；操作条在 DOM 序中前置、用 flex `order` 还原视觉顺序——这样三方插件 `querySelector('[class*="_actions"]')` 的首个命中永远是消息操作条，而不是气泡内代码卡的工具条。
 
@@ -89,7 +89,7 @@ const a = 1
 
 ### 兼容性
 
-- 实测 DSH `0.2.1-rc.2`（web profile，Chromium）。依赖：keyed 槽位 `conversation.chat.node`（`user` / `steering`）、座位上的 `renderFactorySlot` 绑定、行锚点 `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo`、primitives 导出的 `MarkdownText` / `writeClipboard`。
+- 实测 DSH `0.2.2-rc.5`（web profile，Chromium；0.2.1-rc.2 同契约）。依赖：keyed 槽位 `conversation.chat.node`（`user` / `steering`）、座位上的 `renderFactorySlot` 绑定、`uiConversation.userText.createEvaluator()` 与文本工厂槽 `conversation.user.text`、行锚点 `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo`、primitives 导出的 `MarkdownText` / `writeClipboard`。
 - **0.2.1 把扩展点往里挪了**，本插件 0.1.5 已按新契约移植（旧契约的三样东西都不在了）：`primitives.projectUserText` 被删除 → 改调文本工厂槽 `conversation.user.text`；座位 props 从 `{ node, renderMessageImages, openFile, openSkill, t }` 变成 `{ node, renderFactorySlot, loadImage, t }` → 图片改调图片画廊工厂槽 `conversation.images.content`。
 - **为什么不能去换内容工厂槽**：`conversation.chat.user.content` 由宿主注册，插件再注册同名工厂会让**宿主自己的聊天插件启动失败**（实测 `web boot: 1 entry did not activate @deepseek-ai/dsh-client-ui-chat: failed`），所以「只换气泡内部」这条路走不通；同理，`conversation.chat.user.images` 这个子槽也不能由插件声明（实测 `slot "conversation.chat.user.images" is already declared (by factory "conversation.chat.user.content")`）。座位替换 + 两个工厂槽调用是当前版本唯一可行且不伤宿主的组合。
 - 与 `dsh-edit-turn`、`dsh-delete-turn`、`dsh-rerun-turn` 协同：三者的按钮注入基于 `[class*="_actions"]` / `[class*="_action"]`，本插件保留该契约；被 dsh-edit-turn 改写（rollback）的消息显示其自己的改写气泡，与本插件无关。
@@ -107,8 +107,15 @@ const a = 1
 
 也就是说：**座位替换（A）+ 调两个工厂槽**是当前版本唯一不伤宿主的组合；上面三条任意一条放开，都可以迁到 B。
 
+0.2.2 补一条边界说明：`uiConversation.userText` 给的是**数据侧**的节点边界（求值器），不是渲染入口；引用节点仍必须回到 `conversation.user.text` 工厂才能拿到宿主自己的 keyed renderer。所以它解决的是「哪些片段是引用」，不改变上面 B 方案的三条阻塞。
+
 ### 修复记录
 
+- **0.2.2** —— **引用 chip 真的回来了**。0.1.5 把投影从已删除的 `primitives.projectUserText` 改成 `renderFactorySlot('conversation.user.text', …)` 后，仍按旧假设把返回值当作「chip / 纯文本片段」拆分；但工厂返回的是单个 `<FactoryOutlet>` 元素，`data-ref-chip` 永远不存在，于是消息里所有引用都被当成纯文本，session 引用既不蓝也不可交互。现在改为两条腿走路：
+  - 用 `ctx.uiConversation.userText.createEvaluator()` 取宿主自己的文本规则结果（session / file / folder / skill / command / quote / secret 的边界由注册这些规则的插件决定，不是本插件再写一份解析器）；
+  - 每个引用节点把**原始 token** 交回 `conversation.user.text` 工厂，由宿主的 keyed renderer 画 chip：session 仍是宿主的蓝色 chip，file 仍是可点击打开侧栏、带右键菜单的 chip，skill 仍有预览入口；本插件只负责把纯文本节点送进 `MarkdownText`，并不复制任何 chip 组件。
+  - 求值器不可用、返回的节点不连续或越界、或任一渲染步骤抛错时，仍退回原来的整条投影 / 裸文本兜底，座位不会被摘除。
+  - 新增回归：节点覆盖与事实传递、每个引用只投影自己的 token（`interactive: true`）、chip 夹在两段 Markdown 之间、chip 间空白保留、全文本节点不调用引用投影、畸形节点与抛错求值器都走兜底。
 - **0.1.5** —— 按 DSH `0.2.1-rc.2` 的新契约移植，并把 `engines.dsh` 从开口的 `>=0.2.0-rc.1` 收成 `>=0.2.1-rc.2`（旧区间会让它在 0.2.1 上照样安装、只静默降级）。
   - **引用 chip 回来了**：`primitives.projectUserText` 在 0.2.1 被删除（真机报 `TypeError: primitives.projectUserText is not a function`），投影改成调用宿主的文本工厂槽 `conversation.user.text`（`facts.sessionLabels` / `facts.skillNames` + `interactive`），chip 拆分逻辑不变。真机复验：控制台里那条降级告警不再出现（0 条），25/25 条用户气泡仍由本插件渲染。
   - **图片附件回来了**：座位 props 里的 `renderMessageImages` 已不存在，改调图片画廊工厂槽 `conversation.images.content`（附件插件自己注册的那个；它的 `MessageImages` 也只是这一步调用）。三条看起来更顺的路都被堵着，README 的「兼容性」一节记了实测报错原文。
@@ -136,7 +143,7 @@ DSH draws your own messages verbatim (`white-space: pre-wrap`): paste a README, 
 
 - **Official seat replacement** — registers `user` and `steering` keyed entries in `conversation.chat.node` at `priority: -1` through `ctx.slots`; disabling or uninstalling restores the host's own bubble. No source edits, no log writes.
 - **The host's own renderer** — calls `MarkdownText` from `@deepseek-ai/dsh-client-ui-primitives`, so user messages share the assistant pipeline: the same parsing, highlighting, tables, math and code cards.
-- **Reference chips stay chips** — the host projection (`projectUserText`) is called as usual and split into chips and plain runs; chips keep their click targets, each plain run becomes a Markdown block.
+- **Reference chips stay chips, rendered by the host** — the host's own `uiConversation.userText` evaluator supplies the node boundaries (session / file / folder / skill / command / quote / secret), and every reference token is handed back to the `conversation.user.text` factory. The host's keyed renderers draw the chip: the blue session chip, the click-to-open file chip with its context menu, the skill preview entry. Plain-text nodes go through `MarkdownText`. The plugin no longer guesses chips from a `data-ref-chip` prop on the projection — the 0.2.x factory returns one `<FactoryOutlet>`, which is exactly why every reference degraded to plain text after 0.1.5.
 - **Action strip and sibling-plugin compatibility** — clock and copy are rebuilt from exported primitives; the strip keeps the `_actions` / `_action` class suffixes and the `data-clock` anchor that dsh-edit-turn, dsh-delete-turn and dsh-rerun-turn search for.
 - **Attachments and extra blocks** — images go through the official `conversation.message.images` seat (`renderMessageImages`); file cards, the reference summary and `JsonBlock` extras match the host.
 - **Soft breaks preserved** — continuation lines outside fenced code get GFM's two-space hard break; code keeps every byte, indented code and table rows are left alone.
@@ -178,7 +185,7 @@ Queued-message previews, the composer itself and the goal panel stay plain text 
 
 1. **Seat shadowing** — the browser half registers `user` and `steering` keyed entries under `conversation.chat.node` at `priority: -1`, lower than the host's default `0` (same key at the same priority throws; the lowest renders).
 2. **Content split** — the node's `content` is split exactly as the host's `UserStyleBubble` does: text, image attachments, file cards, remaining blocks.
-3. **Chip-aware Markdown composition** — the host projection is split into chips and plain runs; each plain run renders through `MarkdownText`, chips stay clickable elements.
+3. **Host-rule segmentation** — `uiConversation.userText.createEvaluator()` returns the same nodes the host bubble renders (its chat, reference, skill, quote and secret plugins all register into that one registry). Plain-text nodes render through `MarkdownText`; each reference node is projected from its original token back through the `conversation.user.text` factory, so the host's own keyed renderer draws the chip and owns both its appearance and its interaction.
 4. **Source preparation** — CRLF normalization, session-recall wire links (`@[label](dsh-session:…)`) reduced to their display label, and two-space hard breaks on continuation lines outside fenced code.
 5. **Shell parity** — row/stack/bubble/file-card metrics are copied from the host sheets (`MessageItem.module.css`, `MessageIconActions.module.css`) while colors stay theme tokens; the action strip leads the row's DOM order with flex `order` restoring the visual order, so a sibling plugin's `querySelector('[class*="_actions"]')` always lands on the message bar — never on a code card's toolbar inside the bubble.
 
@@ -192,12 +199,17 @@ Queued-message previews, the composer itself and the goal panel stay plain text 
 
 ### Compatibility
 
-- Verified against DSH `0.2.0-rc.1` (web profile, Chromium). Depends on the keyed `conversation.chat.node` slot, the `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo` row anchors, and the primitives exports `MarkdownText` / `projectUserText` / `writeClipboard`.
+- Verified against DSH `0.2.2-rc.5` (web profile, Chromium; the `0.2.1-rc.2` contract is the same). Depends on the keyed `conversation.chat.node` slot, the seat's `renderFactorySlot` binding, `uiConversation.userText.createEvaluator()` plus the `conversation.user.text` factory, the `data-chat-flow-kind` / `data-pending-steering` / `data-submission-echo` row anchors, and the primitives exports `MarkdownText` / `writeClipboard`.
 - Works alongside `dsh-edit-turn`, `dsh-delete-turn` and `dsh-rerun-turn`: their injection relies on `[class*="_actions"]` / `[class*="_action"]`, which this plugin preserves. A message rewritten (rolled back) by dsh-edit-turn shows that plugin's own replacement bubble, which is out of scope here.
 - The host half is an inert entry (no runtime behavior); everything lives in the `./client` browser bundle. No official source is modified and no private event type is written.
 
 ### Fixes
 
+- **0.2.2** — **the reference chips are actually back**. 0.1.5 moved the projection off the removed `primitives.projectUserText` onto `renderFactorySlot('conversation.user.text', …)` but kept splitting its return value as if it were a list of chip / plain-run elements. The factory returns a single `<FactoryOutlet>`, so `data-ref-chip` never matched and every reference in the message became plain text — session references stopped rendering blue and lost their interaction. The healthy path now works in two steps:
+  - `ctx.uiConversation.userText.createEvaluator()` returns the host's own node boundaries (the session / file / folder / skill / command / quote / secret rules are registered into that registry by their owning plugins, so this plugin does not re-implement the parser);
+  - every reference node is projected from its original token back through `conversation.user.text`, so the host's own keyed renderer draws the chip: the blue session chip, the clickable file chip, the skill preview entry. The plugin only sends plain-text nodes to `MarkdownText`; it copies no chip component.
+  - The old whole-message projection / raw-text fallbacks remain for a host without the evaluator, for malformed node ranges, and for any throwing step, so the seat is never retired.
+  - New regression: node coverage and facts, one projection per reference token with `interactive: true`, chips between two Markdown blocks, whitespace between chips preserved, all-text nodes projecting no chips, and malformed/throwing evaluators taking the fallback.
 - **0.1.4** — synthesizes the degradation paths into ONE function, as the reviewer asked: composition failure, a throwing host projection and the last-resort net each used to carry their own copy (one calling the host projection, one building the raw-text span inline), all kept in step by hand. There is now a single `degradedBody()`: it tries the host's own projection first — so reference chips and the host's own inline pieces survive — and only a projection that itself throws degrades to the raw text. Content first is now the function's contract: raw text is the last step, reached only when the host refuses to project. New regression: exactly one `projectUserText` call in the whole file, one raw-text span construction, and every degradation caller sharing the function (re-introducing a second copy turns it red).
 - **0.1.3** — completes the "the seat render never throws" invariant: 0.1.2 guarded composition and the copy lookups, but shapes still threw in the seat's own render (an absent `node` -> `node.data`, absent props -> the destructuring itself, a `time` the Date constructor refuses — Symbol, BigInt, a `valueOf` that throws — and a host image renderer that throws). Each escaped to the slot machinery and retired the entry, the same symptom 0.1.2 fixed. Three layers now: one try around the seat body with defensive `node` / `data` access, per-call guards for the clock and the attachment card, and a last-resort `renderPlainRow` so the worst case is one row falling back to plain text with its action strip and the sibling anchors intact. Regression: 21 hostile host shapes, each asserted not to throw and to keep the row and its strip.
 - **0.1.2** — the seat component can no longer be retired by a render-time exception: `composeUserMarkdown` / `buildMarkdownLabels` run while the seat renders, and a throw there is not caught by the error boundary (a boundary catches its descendants, not the render that creates it) — it escapes to the slot machinery, which drops the whole entry and hands the row back to the host, so the bubble reverts to raw source on screen. Composition and every copy lookup now degrade inside the seat: any host-shape mismatch (an unexpected node, an unrecognised projection result, a locale seat that is not callable) falls back to the host's plain projection while the bubble shell, the action strip and the sibling-plugin anchors stay intact. `data.content` that is not an array and an uncallable `t` are covered by regression tests.
