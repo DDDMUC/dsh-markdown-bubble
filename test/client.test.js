@@ -417,6 +417,144 @@ test('a newline between two chips stays a line break, as the host pre-wrap bubbl
   assert.equal(gap.props.children, '\n')
 })
 
+// --- host user-text nodes (the real 0.2.x path) --------------------------------
+
+/**
+ * A host user-text evaluator stub returning fixed nodes and recording its input.
+ * The real one is `uiConversation.userText.createEvaluator()`; the rules behind
+ * it are the host's own (session, file, folder, skill, command, quote, secret).
+ * @param nodes - fixed nodes covering the test text.
+ * @returns the evaluator plus its recorded inputs.
+ */
+function evaluatorStub(nodes) {
+  const calls = []
+  const evaluator = (input) => {
+    calls.push(input)
+    return nodes
+  }
+  evaluator.calls = calls
+  return evaluator
+}
+
+test('host user-text nodes keep the session chip and markdown the runs around it', () => {
+  const { exports, react } = materialize()
+  const token = '@[Alice](dsh-session:s1)'
+  const text = `ask ${token} **now**`
+  const start = 'ask '.length
+  const end = start + token.length
+  const nodes = [
+    { id: 'text', start: 0, end: start, data: { text: 'ask ' } },
+    { id: 'session', start, end, data: { label: 'Alice' } },
+    { id: 'text', start: end, end: text.length, data: { text: ' **now**' } },
+  ]
+  const evaluations = evaluatorStub(nodes)
+  const projections = []
+  const renderFactorySlot = (name, props) => {
+    projections.push({ name, props })
+    // The host's real projection renders SessionReference -> ReferenceChip; the
+    // stub keeps the marker the live DOM exposes.
+    return react.createElement('span', { 'data-ref-chip': 'session' }, props.text)
+  }
+
+  const body = exports.composeUserMarkdown(text, {}, ['Alice'], [], renderFactorySlot, evaluations)
+  const tree = renderTree(body, react)
+
+  // The host evaluator ran once, with the message facts the host bubble passes.
+  assert.equal(evaluations.calls.length, 1)
+  assert.equal(evaluations.calls[0].text, text)
+  assert.deepEqual(evaluations.calls[0].facts.sessionLabels, ['Alice'])
+
+  // Exactly the reference token is handed back to the host Factory: its own
+  // session/file/skill rule must re-match it, which is what preserves the blue
+  // chip and whatever interaction the host attaches to that node type.
+  assert.equal(projections.length, 1)
+  assert.equal(projections[0].name, 'conversation.user.text')
+  assert.equal(projections[0].props.text, token)
+  assert.equal(projections[0].props.interactive, true)
+  assert.deepEqual(projections[0].props.facts.sessionLabels, ['Alice'])
+
+  const all = flatten(tree)
+  const chip = all.find((node) => node.props['data-ref-chip'] === 'session')
+  assert.ok(chip !== null, 'the host chip element is preserved, not replaced by plain text')
+  const blocks = all.filter((node) => node.props['data-dshmb-md'] === '1')
+  assert.equal(blocks.length, 2, 'the plain runs on both sides of the chip became markdown blocks')
+  assert.ok(all.indexOf(blocks[0]) < all.indexOf(chip), 'the leading run renders before the chip')
+  assert.ok(all.indexOf(chip) < all.indexOf(blocks[1]), 'the trailing run renders after the chip')
+  assert.equal(blocks[1].props.children.props.text, ' **now**', 'markdown survives next to a reference, with the host gap intact')
+})
+
+test('a file reference is projected with interactive: true, so the host keeps click-to-open', () => {
+  const { exports, react } = materialize()
+  const token = '@src/a.ts'
+  const text = `open ${token}`
+  const nodes = [
+    { id: 'text', start: 0, end: 5, data: { text: 'open ' } },
+    { id: 'file', start: 5, end: text.length, data: { path: 'src/a.ts', label: 'a.ts' } },
+  ]
+  const projections = []
+  const renderFactorySlot = (name, props) => {
+    projections.push({ name, props })
+    return react.createElement('button', { 'data-ref-chip': 'file' }, props.text)
+  }
+
+  const body = exports.composeUserMarkdown(text, {}, [], [], renderFactorySlot, evaluatorStub(nodes))
+  const chip = querySelector(renderTree(body, react), (node) => node.props['data-ref-chip'] === 'file')
+  assert.ok(chip !== null, 'the host file chip is preserved')
+  assert.equal(projections.length, 1)
+  assert.equal(projections[0].props.text, token)
+  assert.equal(projections[0].props.interactive, true, 'interactive is what gives FileReference its onActivate')
+})
+
+test('the gap between two host reference nodes stays pre-wrap whitespace', () => {
+  const { exports, react } = materialize()
+  const nodes = [
+    { id: 'session', start: 0, end: 2, data: { label: 'a' } },
+    { id: 'text', start: 2, end: 3, data: { text: ' ' } },
+    { id: 'session', start: 3, end: 5, data: { label: 'b' } },
+  ]
+  const renderFactorySlot = (name, props) => react.createElement('span', { 'data-ref-chip': 'session' }, props.text)
+  const body = exports.composeUserMarkdown('@a @b', {}, ['a', 'b'], [], renderFactorySlot, evaluatorStub(nodes))
+  const gap = body.props.children[1]
+  assert.equal(gap.props['data-dshmb-gap'], '1')
+  assert.equal(gap.props.children, ' ')
+})
+
+test('all-text host nodes still become one markdown block and project no chips', () => {
+  const { exports, react } = materialize()
+  let projections = 0
+  const renderFactorySlot = () => {
+    projections++
+    return react.createElement('span', null, 'chip')
+  }
+  const body = exports.composeUserMarkdown(
+    'line one\nline two',
+    {},
+    [],
+    [],
+    renderFactorySlot,
+    evaluatorStub([{ id: 'text', start: 0, end: 17, data: { text: 'line one\nline two' } }]),
+  )
+  assert.equal(projections, 0)
+  assert.equal(body.props['data-dshmb-md'], '1')
+  assert.equal(body.props.children.props.text, 'line one  \nline two')
+})
+
+test('malformed or throwing host nodes fall back to the whole-message projection', () => {
+  const { exports } = materialize()
+  const cases = [
+    () => [{ id: 'text', start: 1, end: 2, data: {} }],
+    () => [{ id: 'text', start: 0, end: 99, data: {} }],
+    () => {
+      throw new Error('rule exploded')
+    },
+  ]
+  for (const evaluator of cases) {
+    const body = exports.composeUserMarkdown('abc', {}, [], [], factorySlotStub, evaluator)
+    assert.equal(body.props['data-dshmb-md'], '1')
+    assert.equal(body.props.children.props.text, 'abc')
+  }
+})
+
 test('empty text composes to nothing', () => {
   const { exports } = materialize()
   assert.equal(exports.composeUserMarkdown('', {}, [], [], factorySlotStub), null)
@@ -468,6 +606,37 @@ test('apply shadows both sent-message seats at a lower priority', () => {
   }
   assert.equal(globalThis.__DSH_MARKDOWN_BUBBLE__.version, exports.PLUGIN_VERSION)
   assert.deepEqual(globalThis.__DSH_MARKDOWN_BUBBLE__.seats, ['user', 'steering'])
+
+  for (const dispose of disposers.reverse()) dispose()
+})
+
+test('apply captures the host user-text evaluator for the seats', () => {
+  const { exports } = materialize()
+  assert.ok(exports.inject.includes('uiConversation'), 'the host user-text registry is a declared dependency')
+
+  const evaluations = []
+  const disposers = []
+  const ctx = {
+    uiConversation: {
+      userText: {
+        createEvaluator: () => (input) => {
+          evaluations.push(input)
+          return [{ id: 'text', start: 0, end: 5, data: { text: 'hello' } }]
+        },
+      },
+    },
+    slots: { inject: () => {}, register: () => () => {} },
+    effect: (factory) => {
+      const dispose = factory()
+      if (typeof dispose === 'function') disposers.push(dispose)
+    },
+  }
+  exports.apply(ctx)
+
+  const body = exports.composeUserMarkdown('hello', {}, [], [], factorySlotStub)
+  assert.equal(evaluations.length, 1, 'composition goes through the evaluator captured by apply')
+  assert.deepEqual(evaluations[0].facts.sessionLabels, [])
+  assert.equal(body.props['data-dshmb-md'], '1')
 
   for (const dispose of disposers.reverse()) dispose()
 })
@@ -743,7 +912,11 @@ test('there is exactly one place that projects, and one that builds the raw text
   const code = source.replace(/^\s*\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
 
   const projections = [...code.matchAll(/renderFactorySlot\('conversation\.user\.text'/g)]
-  assert.equal(projections.length, 1, 'the host projection is called in exactly one place (degradedBody)')
+  // Two legitimate calls: the whole-message degraded projection (degradedBody)
+  // and the per-reference chip projection (referencePiece). A chip is projected
+  // from its own token so the host's own reference renderer — not a copy —
+  // draws it; the whole-message call remains the single fallback.
+  assert.equal(projections.length, 2, 'the host projection is called only by degradedBody and referencePiece')
   assert.equal(
     /primitives\.projectUserText/.test(code),
     false,

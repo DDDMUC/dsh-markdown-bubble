@@ -2,6 +2,13 @@
 
 ## 中文
 
+**0.2.2** —— 引用 chip 修复：从「猜投影里的 chip」改成「用宿主规则分段、宿主组件渲染」。
+
+- 0.1.5 把投影改成 `renderFactorySlot('conversation.user.text', …)` 后，工厂返回的是单个 `<FactoryOutlet>`，而插件仍按 chip / 纯文本片段拆分；`data-ref-chip` 永远不存在，消息里的 session / file / skill 引用全部退化成纯文本，session chip 不再蓝、也不再可交互。
+- 现在用 `uiConversation.userText.createEvaluator()` 取得宿主自己的节点边界（规则由宿主的 chat / reference / skill / quote / secret 插件共同注册），再把每个引用节点的原始 token 交回 `conversation.user.text` 工厂；chip 的外观与交互完全由宿主 keyed renderer 决定，纯文本节点仍进 `MarkdownText`。
+- 求值器不可用、节点区间不连续 / 越界、或任一渲染步骤抛错时，保留原来的整条投影 / 裸文本兜底；座位不会被摘除。
+- 新增回归：节点覆盖与 facts 传递、每个引用只投影自己的 token 且 `interactive: true`、chip 夹在两段 Markdown 之间、chip 间空白保留、全文本节点不调用引用投影、畸形节点与抛错求值器都走兜底。
+
 **0.2.1** —— 卡片文案。
 
 - 「气泡 Lite」的描述去掉「（默认）」，默认值仍在卡片里标明。

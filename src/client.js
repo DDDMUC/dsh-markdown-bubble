@@ -49,13 +49,28 @@ window.__ModuleLoader__.load({
     const NS = 'dsh-markdown-bubble'
 
     /** Keep in sync with package.json and src/index.js. */
-    const PLUGIN_VERSION = '0.2.1'
+    const PLUGIN_VERSION = '0.2.2'
 
     /** Presence marker the live verifier reads. */
     const DEBUG_KEY = '__DSH_MARKDOWN_BUBBLE__'
 
     /** Style tag id claimed by this plugin (HMR and dispose remove it by id). */
     const CSS_TAG = NS + '/markdown-bubble.css'
+
+    /**
+     * The host's own user-text evaluator, captured once in {@link apply}.
+     *
+     * It turns the message text into the same JSON nodes the host bubble
+     * renders: plain text plus one node per confirmed reference (session, file,
+     * folder, skill, command, quote, secret). Those rules live in
+     * `uiConversation.userText` and are registered by the host's own chat,
+     * reference, skill, quote and secret plugins, so the boundaries this plugin
+     * composes around are the host's — not a second parser that could drift.
+     *
+     * Null before `apply` runs, when the host exposes no such service, or in a
+     * unit test; composition then uses the projection-splitting fallback.
+     */
+    let userTextEvaluator = null
 
     /** Chat-node seats this renderer replaces; the host serves both with one view. */
     /**
@@ -482,11 +497,12 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
      * @param referenceLabels - session recall labels.
      * @param skillNames - skill names.
      * @param renderFactorySlot - the seat's Factory binding.
+     * @param evaluator - optional host user-text evaluator (defaults to the captured one).
      * @returns the composed body, or null when markdown cannot be produced.
      */
-    function safeMarkdownBody(text, t, referenceLabels, skillNames, renderFactorySlot, labels) {
+    function safeMarkdownBody(text, t, referenceLabels, skillNames, renderFactorySlot, labels, evaluator) {
       try {
-        return composeUserMarkdown(text, labels, referenceLabels, skillNames, renderFactorySlot)
+        return composeUserMarkdown(text, labels, referenceLabels, skillNames, renderFactorySlot, evaluator)
       } catch (error) {
         warnOnce('markdown composition failed; showing the degraded projection', error)
         return null
@@ -516,20 +532,164 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
     }
 
     /**
-     * Compose the bubble body: reference chips stay chips, each contiguous
-     * plain run becomes a markdown block — except a whitespace-only run, which
-     * stays a pre-wrap text node so two chips never glue together. A chip inside
-     * a running paragraph splits that paragraph around the chip; boundary chips
-     * read seamlessly.
+     * Run the host's own user-text rules over the message.
+     *
+     * The returned nodes are the host bubble's own segmentation: `text` nodes
+     * between the references, and one `session` / `file` / `folder` / `skill` /
+     * `command` / `quote` / `secret` node per confirmed reference. The
+     * evaluator also publishes the original-text fallback the host uses when a
+     * rule throws, so a failed evaluation comes back as null here and lets the
+     * projection fallback take over.
+     * @param text - the message text.
+     * @param referenceLabels - session recall labels the host associates with the message.
+     * @param skillNames - skill names the host loaded for the message.
+     * @param evaluator - `uiConversation.userText.createEvaluator()` result.
+     * @returns contiguous nodes covering `text`, or null when unavailable.
+     */
+    function evaluateUserText(text, referenceLabels, skillNames, evaluator) {
+      if (typeof evaluator !== 'function') return null
+      try {
+        const nodes = evaluator({
+          text,
+          facts: { sessionLabels: referenceLabels, skillNames },
+        })
+        if (!Array.isArray(nodes) || nodes.length === 0) return null
+        // The document contract guarantees ordered, contiguous, nonempty
+        // ranges covering the text. Reject anything else instead of composing
+        // around half-valid host data — the fallback is always safe.
+        let cursor = 0
+        for (const node of nodes) {
+          if (node === null || typeof node !== 'object') return null
+          if (!Number.isInteger(node.start) || !Number.isInteger(node.end)) return null
+          if (node.start !== cursor || node.end <= node.start || node.end > text.length) return null
+          if (typeof node.id !== 'string' || node.id === '') return null
+          cursor = node.end
+        }
+        return cursor === text.length ? nodes : null
+      } catch (error) {
+        warnOnce('the host user-text evaluator failed; using the projection fallback', error)
+        return null
+      }
+    }
+
+    /**
+     * Render one host reference node by asking the host to project exactly that
+     * token.
+     *
+     * This is deliberately not a copy of the host's chip components: the
+     * Factory resolves the host's own keyed renderer (`SessionReference`,
+     * `FileReference`, the skill / command / quote / secret entries) with the
+     * same inject face it receives inside a normal bubble. A session chip keeps
+     * the host's blue appearance, and a file chip keeps its click-to-open
+     * behavior and context menu, including any interaction the host adds later.
+     * @param raw - the reference's original spelling.
+     * @param referenceLabels - session recall labels for the message.
+     * @param skillNames - skill names for the message.
+     * @param renderFactorySlot - the seat's Factory binding.
+     * @param key - react key.
+     * @returns the host-projected reference, or its raw text if projection fails.
+     */
+    function referencePiece(raw, referenceLabels, skillNames, renderFactorySlot, key) {
+      try {
+        if (typeof renderFactorySlot === 'function') {
+          const projected = renderFactorySlot('conversation.user.text', {
+            text: raw,
+            facts: { sessionLabels: referenceLabels, skillNames },
+            interactive: true,
+            ellipsis: false,
+          })
+          // A missing factory renders nothing; never drop the reference itself.
+          if (projected !== null && projected !== undefined) return h(Fragment, { key }, projected)
+        }
+      } catch (error) {
+        warnOnce('the host reference projection failed; showing the raw reference', error)
+      }
+      return h('span', { className: 'dshmb-plain', key }, raw)
+    }
+
+    /**
+     * Compose from the host's own user-text nodes: each reference node stays the
+     * host's chip, each contiguous plain run becomes a markdown block — except a
+     * whitespace-only run, which stays a pre-wrap node so two chips never glue
+     * together. A chip inside a running paragraph splits that paragraph around
+     * the chip; boundary chips read seamlessly.
+     * @param text - the message text the nodes were evaluated from.
+     * @param nodes - contiguous host user-text nodes.
+     * @param labels - markdown chrome labels.
+     * @param referenceLabels - session recall labels the host associates with the message.
+     * @param skillNames - skill names the host loaded for the message.
+     * @param renderFactorySlot - the seat's Factory binding.
+     * @returns the composed body, or null when there is nothing to render.
+     */
+    function composeFromUserTextNodes(text, nodes, labels, referenceLabels, skillNames, renderFactorySlot) {
+      const out = []
+      let run = ''
+      let chips = 0
+      const flush = () => {
+        if (run === '') return
+        const raw = run
+        const source = toMarkdown(raw)
+        if (source.trim() === '') {
+          // Whitespace is not markdown, so it never becomes a block — but it is
+          // not nothing either. Between two chips it is the only thing keeping
+          // them apart: dropping it renders "@a@b" where the host shows
+          // "@a @b", and a newline between two chips (a real line break in the
+          // host's pre-wrap bubble) would collapse onto one line.
+          const gap = raw.replace(/\r\n?/gu, '\n')
+          if (gap !== '') out.push(gapSpan(gap, 'gap' + out.length))
+        } else {
+          out.push(markdownBlock(source, labels, 'md' + out.length))
+        }
+        run = ''
+      }
+      for (const node of nodes) {
+        if (node.id === 'text') {
+          const raw = text.slice(node.start, node.end)
+          // A text rule may publish a display replacement (whitespace collapse,
+          // trim, a quote gap); the host shows that replacement, not the source.
+          const display = node.data !== null && typeof node.data === 'object' ? node.data.display : undefined
+          run += typeof display === 'string' ? display : raw
+        } else {
+          chips++
+          flush()
+          out.push(
+            referencePiece(text.slice(node.start, node.end), referenceLabels, skillNames, renderFactorySlot, 'chip' + out.length),
+          )
+        }
+      }
+      flush()
+      if (chips === 0) return markdownBlock(toMarkdown(text), labels, 'md')
+      if (out.length === 0) return null
+      return out.length === 1 ? out[0] : h(Fragment, null, out)
+    }
+
+    /**
+     * Compose the bubble body.
+     *
+     * The healthy path evaluates the message with the HOST's user-text rules and
+     * renders each reference through the HOST's own Factory, so reference chips
+     * keep their appearance and interaction. The projection-splitting path below
+     * is the fallback for a host without that evaluator (it can only see chips
+     * the projection exposes as `data-ref-chip` elements).
      * @param text - the message text.
      * @param labels - markdown chrome labels.
      * @param referenceLabels - session recall labels the host associates with the message.
      * @param skillNames - skill names the host loaded for the message.
      * @param renderFactorySlot - the seat's Factory binding.
+     * @param evaluator - optional host user-text evaluator (defaults to the one captured by apply).
      * @returns the composed body, or null for empty text.
      */
-    function composeUserMarkdown(text, labels, referenceLabels, skillNames, renderFactorySlot) {
+    function composeUserMarkdown(text, labels, referenceLabels, skillNames, renderFactorySlot, evaluator = userTextEvaluator) {
       if (typeof text !== 'string' || text === '') return null
+      const nodes = evaluateUserText(text, referenceLabels, skillNames, evaluator)
+      if (nodes !== null) {
+        try {
+          const composed = composeFromUserTextNodes(text, nodes, labels, referenceLabels, skillNames, renderFactorySlot)
+          if (composed !== null) return composed
+        } catch (error) {
+          warnOnce('composing from host user-text nodes failed; using the projection fallback', error)
+        }
+      }
       // The same single degraded projection, so a projection that throws inside
       // composition degrades exactly as one that throws on the healthy path.
       const projected = degradedBody(text, referenceLabels, skillNames, renderFactorySlot)
@@ -895,7 +1055,7 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
       // ONE degraded body per render: it is the composition guard's projection
       // and the boundary's fallback, so building it eagerly (as this used to)
       // ran the projection twice per render and, on 0.2.1-rc.2, threw twice.
-      const body = safeMarkdownBody(text, t, referenceLabels, skillNames, renderFactorySlot, labels)
+      const body = safeMarkdownBody(text, t, referenceLabels, skillNames, renderFactorySlot, labels, userTextEvaluator)
       const degraded = () => degradedBody(text, referenceLabels, skillNames, renderFactorySlot)
 
       // The action strip leads the row in DOM order and is pushed below the
@@ -1076,6 +1236,21 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
      */
     function apply(ctx) {
       injectStyles()
+      // Capture the host's user-text rules once. They are the same rules the
+      // host bubble runs (registered by the chat, reference, skill, quote and
+      // secret plugins into this very registry), so reference detection — and
+      // therefore every blue chip and its click behavior — stays the host's.
+      try {
+        const service = ctx.uiConversation ?? (typeof ctx.get === 'function' ? ctx.get('uiConversation') : null)
+        const registry = service !== null && service !== undefined ? service.userText : null
+        if (registry !== null && registry !== undefined && typeof registry.createEvaluator === 'function') {
+          userTextEvaluator = registry.createEvaluator()
+        } else {
+          warnOnce('the host user-text evaluator is unavailable; references use the projection fallback')
+        }
+      } catch (error) {
+        warnOnce('the host user-text evaluator could not be created', error)
+      }
       // 外观由宿主记住（跨窗口、跨重启一致）；读到之前先按默认气泡渲染，
       // 读到了再切换，避免闪一下错的样子。
       void readLayout().then((layout) => {
@@ -1136,6 +1311,7 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
 
       ctx.effect(
         () => () => {
+          userTextEvaluator = null
           delete globalThis[DEBUG_KEY]
           removeStyles()
         },
@@ -1216,7 +1392,10 @@ html[data-dshmb-layout="full"] .dshmb-attachments{justify-content:flex-start!imp
 
     exports.apply = apply
     exports.ConfigCard = ConfigCard
-    exports.inject = ['slots', 'locale']
+    // `uiConversation` owns the host's user-text rules; injecting it both
+    // guarantees the library is up before apply and parks this plugin (instead
+    // of crashing) if a future composition drops the conversation domain.
+    exports.inject = ['slots', 'locale', 'uiConversation']
     exports.PLUGIN_VERSION = PLUGIN_VERSION
     exports.SEATS = SEATS
     exports.SEAT_PRIORITY = SEAT_PRIORITY
